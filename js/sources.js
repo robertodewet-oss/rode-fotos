@@ -1,5 +1,5 @@
 import { getAccount, signIn } from './auth.js'
-import { getMyDrive, listRootChildren, listFolderChildren, getDelta, isVideoFile } from './graph.js'
+import { getMyDrive, listRootChildren, listFolderChildren, getDelta, isVideoFile, getItemWebUrl } from './graph.js'
 import { getSources, saveSource, deleteSource, savePhotos, deletePhotosBySource, savePhoto, saveThumbnail, getConfig, setConfig, getPhotos, getProjects, getTags } from './db.js'
 import { getState, setState, autoAssignProject, applyFilters, bestDate } from './store.js'
 import { scheduleSave } from './sync.js'
@@ -246,8 +246,8 @@ export async function indexOneDriveSource(source, incremental = false) {
   setIndexingState(true, source.id, 0, 0, 'Iniciando...')
 
   try {
-    // Cambiar el prefijo fuerza un escaneo completo (p. ej. "delta3_": recalcular fechas)
-    const deltaLink = incremental ? (await getConfig(`delta3_${source.id}`)) : null
+    // Cambiar el prefijo fuerza un escaneo completo (p. ej. "delta4_": recalcular fechas y guardar la de creación)
+    const deltaLink = incremental ? (await getConfig(`delta4_${source.id}`)) : null
     const { items, deltaLink: newDelta } = await getDelta(source.driveId, source.folderId, deltaLink,
       n => setIndexingState(true, source.id, 0, 0, `Revisando OneDrive… ${n.toLocaleString('es-MX')} archivos`))
 
@@ -269,7 +269,7 @@ export async function indexOneDriveSource(source, incremental = false) {
       }
     }
 
-    if (newDelta) await setConfig(`delta3_${source.id}`, newDelta)
+    if (newDelta) await setConfig(`delta4_${source.id}`, newDelta)
 
     // Actualizar fuente
     const updSource = { ...source, status: 'ok', photoCount: items.length, lastSync: Date.now() }
@@ -318,6 +318,7 @@ function buildOneDrivePhoto(item, sourceId, driveId, projects) {
     projectId: null,
     tags: [],
     size: item.size || 0,
+    createdAt: ms(fsi.createdDateTime),
     indexedAt: Date.now(),
   }
   p.projectId = autoAssignProject(p, projects)
@@ -406,6 +407,8 @@ export async function indexLocalSource(source) {
         projectId: null,
         tags: [],
         size: file.size,
+        // El navegador no da la fecha de creación de archivos locales; la de modificación es lo más cercano
+        createdAt: file.lastModified || null,
         indexedAt: Date.now(),
       }
       photo.projectId = autoAssignProject(photo, projects)
@@ -484,6 +487,34 @@ async function generateVideoThumbnail(file, maxSize = 640) {
     return canvas.convertToBlob({ type: 'image/jpeg', quality: 0.82 })
   } finally {
     URL.revokeObjectURL(url)
+  }
+}
+
+export async function openFileLocation(photo) {
+  if (photo.sourceType === 'onedrive') {
+    // Abrir la pestaña ya, dentro del clic: si se abre después de esperar a OneDrive, el navegador la bloquea
+    const win = window.open('about:blank', '_blank')
+    try {
+      const url = await getItemWebUrl(photo.driveId, photo.itemId)
+      if (!url) throw new Error('OneDrive no devolvió la dirección del archivo')
+      if (win) { win.opener = null; win.location.href = url }
+      else window.location.assign(url)
+    } catch (e) {
+      win?.close()
+      notify('No se pudo abrir la ubicación en OneDrive: ' + e.message, 'error')
+    }
+    return
+  }
+
+  // Un sitio web no puede abrir el Explorador de Windows: copiar la ruta para pegarla ahí
+  const source = getState().sources.find(s => s.id === photo.sourceId)
+  const parts = (photo.localPath || photo.name).split('/')
+  const folder = [source?.name || 'Carpeta local', ...parts.slice(0, -1)].join('\\')
+  try {
+    await navigator.clipboard.writeText(folder)
+    notify(`Ruta copiada: ${folder} — pégala en el Explorador de archivos (archivo: ${parts[parts.length - 1]})`, 'success')
+  } catch {
+    notify(`Carpeta: ${folder} — archivo: ${parts[parts.length - 1]}`)
   }
 }
 

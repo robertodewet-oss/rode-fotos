@@ -3,6 +3,8 @@ import { getThumbnail } from './db.js'
 import { getThumbnailUrl } from './graph.js'
 import { openViewer } from './viewer.js'
 import { getAccount } from './auth.js'
+import { openFileLocation } from './sources.js'
+import { formatSize, fileExt } from './ui.js'
 
 const THUMB_W = 196
 const THUMB_H = 147
@@ -100,9 +102,12 @@ class VirtualGallery {
   }
 
   _buildCard(photo) {
-    const { projects } = getState()
+    const { projects, filters } = getState()
     const proj = projects.find(p => p.id === photo.projectId)
-    const date = photo.takenAt ? new Date(photo.takenAt).toLocaleDateString('es-MX', { year: 'numeric', month: 'short', day: 'numeric' }) : '—'
+    const fmt = ts => ts ? new Date(ts).toLocaleDateString('es-MX', { year: 'numeric', month: 'short', day: 'numeric' }) : '—'
+    // La fecha visible sigue al orden elegido; el tooltip muestra ambas
+    const date = fmt(filters.sort.startsWith('created') ? photo.createdAt : photo.takenAt)
+    const dateTitle = `Captura: ${fmt(photo.takenAt)} · Creación: ${fmt(photo.createdAt)}`
 
     const el = document.createElement('div')
     el.className = 'thumb-card'
@@ -115,7 +120,9 @@ class VirtualGallery {
       </div>
       <div class="thumb-info">
         <div class="thumb-project-dot" style="background:${proj?.color ?? '#94a3b8'}"></div>
-        <div class="thumb-date">${date}</div>
+        <div class="thumb-date" title="${dateTitle}">${date}</div>
+        <div class="thumb-meta">${[fileExt(photo.name), formatSize(photo.size)].filter(Boolean).join(' · ')}</div>
+        <button class="thumb-locate" title="Abrir ubicación del archivo" aria-label="Abrir ubicación del archivo">📁</button>
       </div>
       <div class="thumb-check">✓</div>
       ${photo.mediaType === 'video' ? `<div class="thumb-video">▶${photo.duration ? ' ' + formatDuration(photo.duration) : ''}</div>` : ''}`
@@ -153,6 +160,11 @@ class VirtualGallery {
   _onClick(e) {
     const card = e.target.closest('.thumb-card[data-id]')
     if (!card) return
+    if (e.target.closest('.thumb-locate')) {
+      const photo = this.photos.find(p => p.id === card.dataset.id)
+      if (photo) openFileLocation(photo)
+      return
+    }
     const { selection } = getState()
     // Si hay selección activa o se hace clic en el check → toggle select
     if (selection.size > 0 || e.target.closest('.thumb-check')) {
@@ -184,6 +196,13 @@ export function initGallery(container) {
   const wrap = container.querySelector('#gallery-wrap')
   _gallery = new VirtualGallery(wrap)
   return _gallery
+}
+
+// Las tarjetas se reutilizan por id; al cambiar qué fecha muestran hay que reconstruirlas
+export function rebuildGalleryCards() {
+  if (!_gallery) return
+  _gallery.inner.querySelectorAll('.thumb-card').forEach(el => el.remove())
+  updateGallery()
 }
 
 export function updateGallery() {

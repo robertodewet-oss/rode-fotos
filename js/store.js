@@ -7,7 +7,18 @@ export function emptyFilters() {
     hiddenDevices: [],     // deviceOf() de los dispositivos desmarcados
     hiddenKinds: [],       // kindOf() de los tipos desmarcados
     tags: [],              // string[]
+    sort: 'taken-desc',    // clave de SORTS
   }
+}
+
+// Campo y dirección de cada opción de "Ordenar por"
+export const SORTS = {
+  'taken-desc':   ['takenAt', -1, 'Fecha de captura: más reciente'],
+  'taken-asc':    ['takenAt', 1, 'Fecha de captura: más antigua'],
+  'created-desc': ['createdAt', -1, 'Fecha de creación: más reciente'],
+  'created-asc':  ['createdAt', 1, 'Fecha de creación: más antigua'],
+  'size-desc':    ['size', -1, 'Tamaño: más grande'],
+  'size-asc':     ['size', 1, 'Tamaño: más pequeño'],
 }
 
 export const SCREENSHOT_NAME = /screenshot|screen shot|captura|scr_|pantallazo/i
@@ -116,8 +127,15 @@ export function applyFilters() {
     list = list.filter(p => filters.tags.every(t => p.tags?.includes(t)))
   }
 
-  // Ordenar por fecha desc
-  list = [...list].sort((a, b) => (b.takenAt || 0) - (a.takenAt || 0))
+  // Las fotos sin el dato van al final en ambas direcciones
+  const [field, dir] = SORTS[filters.sort] || SORTS['taken-desc']
+  list = [...list].sort((a, b) => {
+    const va = a[field], vb = b[field]
+    if (!va && !vb) return 0
+    if (!va) return 1
+    if (!vb) return -1
+    return (va - vb) * dir
+  })
 
   setState({ filtered: list })
 }

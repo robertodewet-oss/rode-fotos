@@ -108,6 +108,12 @@ export function isVideoFile(name = '') {
   return VIDEO_NAME.test(name)
 }
 
+// Dirección web del archivo en OneDrive (se abre dentro de su carpeta)
+export async function getItemWebUrl(driveId, itemId) {
+  const data = await g(`/drives/${driveId}/items/${itemId}?$select=id,webUrl`)
+  return data?.webUrl || null
+}
+
 // URL temporal pre-autenticada para reproducir un video sin descargarlo completo
 export async function getDownloadUrl(driveId, itemId) {
   const data = await g(`/drives/${driveId}/items/${itemId}`)

@@ -3,7 +3,7 @@ import { getThumbnail } from './db.js'
 import { downloadItem, getDownloadUrl } from './graph.js'
 import { getAccount } from './auth.js'
 import { notify } from './ui.js'
-import { getLocalFile } from './sources.js'
+import { getLocalFile, openFileLocation } from './sources.js'
 
 let _photos = []
 let _idx = 0
@@ -81,6 +81,7 @@ function renderViewer() {
   const proj = projects.find(p => p.id === photo.projectId)
   const photoTags = (photo.tags || []).map(tid => tags.find(t => t.id === tid)?.name).filter(Boolean)
   const date = photo.takenAt ? new Date(photo.takenAt).toLocaleString('es-MX') : '—'
+  const created = photo.createdAt ? new Date(photo.createdAt).toLocaleString('es-MX') : '—'
   const coords = (photo.lat != null && photo.lng != null) ? `${photo.lat.toFixed(5)}, ${photo.lng.toFixed(5)}` : '—'
   const device = [photo.cameraMake, photo.cameraModel].filter(Boolean).join(' ') || '—'
   const size = photo.size ? `${(photo.size / 1024 / 1024).toFixed(1)} MB` : '—'
@@ -91,8 +92,12 @@ function renderViewer() {
       <div class="viewer-info-val filename">${escHtml(photo.name)}</div>
     </div>
     <div class="viewer-info-row">
-      <div class="viewer-info-label">Fecha</div>
+      <div class="viewer-info-label">Fecha de captura</div>
       <div class="viewer-info-val">${date}</div>
+    </div>
+    <div class="viewer-info-row">
+      <div class="viewer-info-label">Fecha de creación</div>
+      <div class="viewer-info-val">${created}</div>
     </div>
     ${proj ? `<div class="viewer-info-row">
       <div class="viewer-info-label">Proyecto</div>
@@ -168,6 +173,10 @@ function next() {
 // Inicializar controles del viewer (llamado una vez en app.js)
 export function initViewer() {
   document.getElementById('viewer-close').addEventListener('click', closeViewer)
+  document.getElementById('viewer-locate').addEventListener('click', () => {
+    const photo = _photos[_idx]
+    if (photo) openFileLocation(photo)
+  })
   document.getElementById('viewer-nav-prev').addEventListener('click', prev)
   document.getElementById('viewer-nav-next').addEventListener('click', next)
   document.getElementById('viewer-overlay').addEventListener('click', e => {

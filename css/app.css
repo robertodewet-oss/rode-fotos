@@ -296,6 +296,22 @@ input, select, textarea { font: inherit; }
   flex-shrink: 0;
 }
 .thumb-date { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; flex: 1; }
+.thumb-meta { white-space: nowrap; color: #64748b; font-variant-numeric: tabular-nums; }
+.thumb-locate {
+  border: none;
+  background: none;
+  padding: 2px;
+  margin-right: -4px;
+  font-size: 13px;
+  line-height: 1;
+  cursor: pointer;
+  border-radius: 4px;
+  opacity: 0;
+  transition: opacity .15s;
+}
+.thumb-card:hover .thumb-locate, .thumb-locate:focus-visible { opacity: 1; }
+.thumb-locate:hover { background: var(--bg); }
+@media (hover: none) { .thumb-locate { opacity: 1; } }
 
 .thumb-check {
   position: absolute;
@@ -565,7 +581,7 @@ input, select, textarea { font: inherit; }
 .viewer-info-val { font-size: 13px; }
 .viewer-info-val.filename { font-weight: 600; word-break: break-all; }
 
-#viewer-close {
+#viewer-close, #viewer-locate {
   position: fixed;
   top: 12px;
   right: 12px;
@@ -579,7 +595,8 @@ input, select, textarea { font: inherit; }
   z-index: 10;
   transition: .15s;
 }
-#viewer-close:hover { background: rgba(255,255,255,.3); }
+#viewer-locate { right: 56px; font-size: 16px; }
+#viewer-close:hover, #viewer-locate:hover { background: rgba(255,255,255,.3); }
 
 /* ── Modal ── */
 .modal-overlay {

@@ -1,9 +1,9 @@
 import { initAuth, signIn, signOut, getAccount } from './auth.js'
 import { openDB, getPhotos, getProjects, getTags, getSources } from './db.js'
-import { getState, setState, applyFilters, clearSelection, subscribe, emptyFilters, kindOf, deviceOf } from './store.js'
+import { getState, setState, applyFilters, clearSelection, subscribe, emptyFilters, kindOf, deviceOf, SORTS } from './store.js'
 import { startClassification } from './classify.js'
 import { syncFromCloud, reloadState } from './sync.js'
-import { initGallery, updateGallery } from './gallery.js'
+import { initGallery, updateGallery, rebuildGalleryCards } from './gallery.js'
 import { initViewer } from './viewer.js'
 import { initMapView, updateMapPhotos, resizeMap } from './mapView.js'
 import { renderSourcesView, connectOneDrive, addLocalFolder, syncAllSources } from './sources.js'
@@ -137,6 +137,9 @@ function renderApp() {
           <summary class="filter-select">Tipos</summary>
           <div class="dd-panel" data-kind-list></div>
         </details>
+        <select id="f-sort" class="filter-select" title="Ordenar por">
+          ${Object.entries(SORTS).map(([k, [, , label]]) => `<option value="${k}">${label}</option>`).join('')}
+        </select>
         <span id="filter-count"></span>
         <button id="btn-clear-filters">✕ Limpiar</button>
       </div>
@@ -238,6 +241,15 @@ function renderApp() {
     setState({ filters: { ...getState().filters, dateTo: val } })
     applyFilters(); updateActiveView()
   })
+  const sortSel = document.getElementById('f-sort')
+  sortSel.value = getState().filters.sort
+  sortSel.addEventListener('change', e => {
+    setState({ filters: { ...getState().filters, sort: e.target.value } })
+    applyFilters()
+    if (_currentView === 'gallery') rebuildGalleryCards(); else updateActiveView()
+    document.getElementById('gallery-wrap')?.scrollTo({ top: 0 })
+  })
+
   const devList = document.getElementById('f-devices-list')
   devList.addEventListener('change', e => {
     const dev = e.target.dataset.device
@@ -270,7 +282,8 @@ function renderApp() {
   })
 
   document.getElementById('btn-clear-filters').addEventListener('click', () => {
-    setState({ filters: emptyFilters() })
+    // "Limpiar" quita filtros pero respeta el orden elegido
+    setState({ filters: { ...emptyFilters(), sort: getState().filters.sort } })
     document.getElementById('f-project').value = ''
     document.getElementById('f-date-from').value = ''
     document.getElementById('f-date-to').value = ''

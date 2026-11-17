@@ -51,6 +51,18 @@ export function escHtml(s) {
   return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;')
 }
 
+export function formatSize(bytes) {
+  if (!bytes) return ''
+  if (bytes < 1024 * 1024) return `${Math.max(1, Math.round(bytes / 1024))} KB`
+  if (bytes < 1024 ** 3) return `${(bytes / 1024 / 1024).toFixed(1)} MB`
+  return `${(bytes / 1024 ** 3).toFixed(2)} GB`
+}
+
+export function fileExt(name = '') {
+  const i = name.lastIndexOf('.')
+  return i > 0 ? name.slice(i + 1).toUpperCase() : ''
+}
+
 export function formatDate(ts, opts = {}) {
   if (!ts) return '—'
   return new Date(ts).toLocaleDateString('es-MX', { year: 'numeric', month: 'short', day: 'numeric', ...opts })
