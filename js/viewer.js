@@ -171,7 +171,11 @@ function next() {
 }
 
 // Inicializar controles del viewer (llamado una vez en app.js)
+let _initialized = false
+
 export function initViewer() {
+  if (_initialized) return
+  _initialized = true
   document.getElementById('viewer-close').addEventListener('click', closeViewer)
   document.getElementById('viewer-locate').addEventListener('click', () => {
     const photo = _photos[_idx]
