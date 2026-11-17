@@ -393,7 +393,7 @@ function isImageFile(name = '') {
   return /\.(jpe?g|png|heic|heif|webp|tiff?)$/i.test(name)
 }
 
-async function generateThumbnail(file, maxSize = 300) {
+async function generateThumbnail(file, maxSize = 640) {
   const bitmap = await createImageBitmap(file)
   const { width, height } = bitmap
   const scale = Math.min(maxSize / width, maxSize / height, 1)
@@ -402,7 +402,7 @@ async function generateThumbnail(file, maxSize = 300) {
   const canvas = new OffscreenCanvas(w, h)
   canvas.getContext('2d').drawImage(bitmap, 0, 0, w, h)
   bitmap.close()
-  return canvas.convertToBlob({ type: 'image/jpeg', quality: 0.75 })
+  return canvas.convertToBlob({ type: 'image/jpeg', quality: 0.82 })
 }
 
 // ── Sincronizar (incremental) ─────────────────────────────────────────────

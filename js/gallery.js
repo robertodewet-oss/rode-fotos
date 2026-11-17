@@ -127,7 +127,8 @@ class VirtualGallery {
         url = photo.thumbnailUrl
       } else if (getAccount()) {
         try {
-          url = await getThumbnailUrl(photo.driveId, photo.itemId, 'small')
+          url = await getThumbnailUrl(photo.driveId, photo.itemId, 'c480x480')
+            || await getThumbnailUrl(photo.driveId, photo.itemId, 'large')
           if (url) {
             // Cachear la URL en el objeto (no persistir para no sobrecargar IDB)
             photo.thumbnailUrl = url
