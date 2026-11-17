@@ -264,15 +264,30 @@ function renderApp() {
   }))
 
   document.querySelectorAll('[data-kind-list]').forEach(list => {
-    list.innerHTML = KIND_FILTERS.map(([kind, label]) => `
+    list.innerHTML = `
+      <div class="dd-actions">
+        <button type="button" data-kinds-all="1">Todos</button>
+        <button type="button" data-kinds-all="0">Ninguno</button>
+      </div>` + KIND_FILTERS.map(([kind, label]) => `
       <label class="check-row">
         <input type="checkbox" data-kind="${kind}" checked>
         <span>${label}</span>
         <span class="check-count" data-kind-count="${kind}"></span>
+        <button type="button" class="check-only" data-kind-only="${kind}" title="Mostrar solo este tipo">solo</button>
       </label>`).join('')
     list.addEventListener('change', e => {
       const kind = e.target.dataset.kind
       if (kind) toggleHidden('hiddenKinds', kind, !e.target.checked)
+    })
+    list.addEventListener('click', e => {
+      const only = e.target.closest('[data-kind-only]')?.dataset.kindOnly
+      const all = e.target.closest('[data-kinds-all]')?.dataset.kindsAll
+      if (only === undefined && all === undefined) return
+      e.preventDefault()
+      const kinds = KIND_FILTERS.map(([k]) => k)
+      const hiddenKinds = only !== undefined ? kinds.filter(k => k !== only) : all === '1' ? [] : kinds
+      setState({ filters: { ...getState().filters, hiddenKinds } })
+      syncCheckboxes(); applyFilters(); updateActiveView()
     })
   })
 
@@ -322,7 +337,6 @@ function renderApp() {
 
   // El shell es nuevo (p. ej. tras cerrar y abrir sesión): forzar que la vista se dibuje de cero
   _currentView = null
-  _mapInitialized = false
   navigate(location.hash.slice(1) || 'gallery')
 
   // Dar tiempo a que cargue la galería antes de empezar a descargar el modelo
@@ -330,6 +344,7 @@ function renderApp() {
 }
 
 const KIND_FILTERS = [
+  ['foto', '🏗️ Obra y otras fotos'],
   ['personas', '👥 Personas'],
   ['selfie', '🤳 Selfies'],
   ['captura', '📱 Capturas de pantalla'],
@@ -359,7 +374,7 @@ function syncCheckboxes() {
 function updateClassifyStatus() {
   const { photos, classifying } = getState()
   const counts = {}
-  for (const p of photos) { const k = kindOf(p); if (k) counts[k] = (counts[k] || 0) + 1 }
+  for (const p of photos) { const k = kindOf(p) || 'foto'; counts[k] = (counts[k] || 0) + 1 }
   document.querySelectorAll('[data-kind-count]').forEach(el => {
     el.textContent = counts[el.dataset.kindCount] || ''
   })
@@ -391,7 +406,6 @@ function updateClassifyStatus() {
 
 let _currentView = null
 let _galleryInstance = null
-let _mapInitialized = false
 
 function navigate(view = null) {
   if (!view) view = location.hash.slice(1) || 'gallery'
@@ -426,12 +440,8 @@ function renderActiveView(view) {
     updateGallery()
     checkEmpty()
   } else if (view === 'map') {
-    if (!_mapInitialized) {
-      initMapView(container)
-      _mapInitialized = true
-    }
+    initMapView(container)
     setTimeout(() => resizeMap(), 100)
-    updateMapPhotos()
   } else if (view === 'projects') {
     renderProjectsView(container)
   } else if (view === 'sources') {

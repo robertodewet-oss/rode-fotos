@@ -1,34 +1,45 @@
 import { getState, setState, applyFilters, SCREENSHOT_NAME, isVideo } from './store.js'
-import { savePhotos, getThumbnail } from './db.js'
+import { savePhotos, getThumbnail, getEmbeddings, saveEmbeddings } from './db.js'
 import { getThumbnailUrls, waitIfThrottled, noteThrottle } from './graph.js'
 import { logError } from './ui.js'
 import { getAccount } from './auth.js'
 import { saveToCloud } from './sync.js'
 
-// Subir este número re-clasifica todas las fotos (p. ej. al cambiar las frases)
-export const KIND_VERSION = 1
+// Subir este número re-clasifica todas las fotos (p. ej. al cambiar las frases o el margen).
+// Con el vector guardado en este dispositivo, reclasificar es instantáneo y no vuelve a pedir miniaturas.
+export const KIND_VERSION = 2
 
 const TRANSFORMERS_URL = 'https://cdn.jsdelivr.net/npm/@huggingface/transformers@3.5.1'
 const MODEL = 'Xenova/clip-vit-base-patch32'
 
-// Frases en inglés porque CLIP se entrenó en inglés; la que más se parece a la imagen decide el tipo
+// Un tipo especial debe superar a la mejor frase de "foto" por este margen; si no, la foto queda como normal.
+// Con argmax simple, fotos de obra sin gente salían como "personas" por diferencias mínimas.
+const MARGIN = 0.015
+
+// Frases en inglés porque CLIP se entrenó en inglés. La galería es sobre todo de obra: muchas frases de "foto".
 const PROMPTS = [
   ['foto', 'a photo of a construction site'],
-  ['foto', 'a photo of a building or a house'],
+  ['foto', 'a photo of a building under construction'],
+  ['foto', 'a photo of concrete, rebar or formwork'],
+  ['foto', 'a photo of a wall, floor or ceiling'],
   ['foto', 'a photo of a room interior'],
+  ['foto', 'a photo of plumbing, electrical work or a roof'],
   ['foto', 'a photo of construction materials or tools'],
+  ['foto', 'a photo of a house exterior'],
   ['foto', 'a photo of a landscape or a beach'],
   ['foto', 'a photo of a car or a street'],
   ['foto', 'a photo of an animal or a pet'],
   ['foto', 'a photo of food'],
   ['foto', 'a photo of furniture'],
-  ['personas', 'a photo of people'],
-  ['personas', 'a photo of a person'],
+  ['foto', 'a photo of a pool or a garden'],
+  ['foto', 'a photo of machinery or a truck'],
+  ['personas', 'a photo of people posing for the camera'],
+  ['personas', 'a group photo of friends or family'],
   ['personas', 'a portrait photo of a person'],
-  ['personas', 'a photo of people playing a sport'],
-  ['personas', 'a family photo'],
+  ['personas', 'a photo of people at a party, a sports game or an event'],
   ['selfie', 'a selfie'],
   ['selfie', 'a close-up selfie of a face taken with a front camera'],
+  ['selfie', 'a selfie of a group of people'],
   ['captura', 'a screenshot of a mobile app user interface'],
   ['captura', 'a screenshot of a website'],
   ['captura', 'a screenshot of a text message conversation'],
@@ -220,9 +231,15 @@ async function hasGpuF16() {
   } catch { return false }
 }
 
-// Descarga las miniaturas de un lote (en paralelo) y las deja listas para el modelo
+// Descarga las miniaturas de un lote (en paralelo) y las deja listas para el modelo.
+// Las fotos con vector ya guardado no se descargan: solo se vuelven a puntuar.
 async function prepareBatch(T, photos) {
   photos.forEach(p => _attempted.add(p.id))
+  const known = await getEmbeddings(photos.map(p => p.id)).catch(() => new Map())
+  const fromVec = photos.filter(p => known.has(p.id)).map(photo => ({ photo, vec: known.get(photo.id) }))
+  photos = photos.filter(p => !known.has(p.id))
+  if (!photos.length) return fromVec
+
   await waitIfThrottled()
   await pace(photos.length)
 
@@ -265,23 +282,36 @@ async function prepareBatch(T, photos) {
   } else {
     onBatchOk(photos.length)
   }
-  return items.filter(Boolean)
+  return [...fromVec, ...items.filter(Boolean)]
 }
 
 async function classifyBatch({ processor, visionModel, textVecs }, ready) {
   if (!ready.length) return []
-  const { image_embeds } = await visionModel(await processor(ready.map(r => r.image)))
-  return image_embeds.tolist().map((emb, i) => {
-    const img = normalize(emb)
-    const ranked = textVecs
-      .map((t, k) => ({ kind: PROMPTS[k][0], score: dot(img, t) }))
-      .sort((a, b) => b.score - a.score)
-    // Si la foto trae datos de cámara no puede ser captura ni gráfico
-    const photo = ready[i].photo
-    const hasCamera = !!(photo.cameraMake || photo.cameraModel)
-    const best = ranked.find(r => !(hasCamera && (r.kind === 'captura' || r.kind === 'grafico')))
-    return [photo.id, best.kind]
+  const toEmbed = ready.filter(r => r.image)
+  if (toEmbed.length) {
+    const { image_embeds } = await visionModel(await processor(toEmbed.map(r => r.image)))
+    const vecs = image_embeds.tolist().map(normalize)
+    toEmbed.forEach((r, i) => { r.vec = Float32Array.from(vecs[i]) })
+    await saveEmbeddings(toEmbed.map(r => [r.photo.id, r.vec])).catch(() => {})
+  }
+  return ready.map(r => [r.photo.id, decideKind(r.vec, r.photo, textVecs)])
+}
+
+function decideKind(img, photo, textVecs) {
+  const best = {}
+  textVecs.forEach((t, k) => {
+    const kind = PROMPTS[k][0]
+    const s = dot(img, t)
+    if (!(kind in best) || s > best[kind]) best[kind] = s
   })
+  // Si la foto trae datos de cámara no puede ser captura ni gráfico
+  const hasCamera = !!(photo.cameraMake || photo.cameraModel)
+  let top = null
+  for (const [kind, s] of Object.entries(best)) {
+    if (kind === 'foto' || (hasCamera && (kind === 'captura' || kind === 'grafico'))) continue
+    if (!top || s > top[1]) top = [kind, s]
+  }
+  return top && top[1] - best.foto >= MARGIN ? top[0] : 'foto'
 }
 
 function normalize(v) {

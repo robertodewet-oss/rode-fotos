@@ -1,6 +1,6 @@
 import { getState, toggleSelect } from './store.js'
 import { getThumbnail } from './db.js'
-import { getThumbnailUrl } from './graph.js'
+import { getThumbnailUrls } from './graph.js'
 import { openViewer } from './viewer.js'
 import { getAccount } from './auth.js'
 import { openFileLocation } from './sources.js'
@@ -12,6 +12,34 @@ const THUMB_GAP = 8
 const INFO_H = 36
 
 const _thumbUrls = new Map()
+
+// Pedir URLs de miniaturas en lotes ($batch de 20) cuando el scroll se detiene, en vez de una petición por tarjeta
+const _thumbQueue = new Map()   // photoId → { photo, waiters[] }
+let _thumbTimer = null
+
+function requestThumbUrl(photo) {
+  return new Promise(resolve => {
+    if (!_thumbQueue.has(photo.id)) _thumbQueue.set(photo.id, { photo, waiters: [] })
+    _thumbQueue.get(photo.id).waiters.push(resolve)
+    clearTimeout(_thumbTimer)
+    _thumbTimer = setTimeout(flushThumbQueue, 120)
+  })
+}
+
+async function flushThumbQueue() {
+  const entries = [..._thumbQueue.values()]
+  _thumbQueue.clear()
+  const onScreen = id => !!document.querySelector(`.thumb-card[data-id="${CSS.escape(id)}"]`)
+  const live = entries.filter(e => onScreen(e.photo.id))
+  entries.filter(e => !live.includes(e)).forEach(e => e.waiters.forEach(w => w(null)))
+  if (!live.length) return
+  const urls = await getThumbnailUrls(live.map(e => e.photo), 'large').catch(() => new Map())
+  for (const e of live) {
+    const url = urls.get(e.photo.itemId) || null
+    if (url) _thumbUrls.set(e.photo.id, url)
+    e.waiters.forEach(w => w(url))
+  }
+}
 
 window.RODE_GALLERY_VERSION = 7
 
@@ -141,12 +169,8 @@ class VirtualGallery {
     } else if (photo.sourceType === 'onedrive') {
       // Solo en memoria: las URLs de Graph caducan y no deben guardarse con la foto
       url = _thumbUrls.get(photo.id) || null
-      if (!url && getAccount()) {
-        try {
-          url = await getThumbnailUrl(photo.driveId, photo.itemId, 'large')
-          if (url) _thumbUrls.set(photo.id, url)
-        } catch {}
-      }
+      if (!url && getAccount()) url = await requestThumbUrl(photo)
+      if (!el.isConnected) return
     }
 
     if (!url) return

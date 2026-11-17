@@ -30,4 +30,4 @@ export const APP_TAGS_FILE     = 'rode-fotos-tags.json'
 export const APP_SOURCES_FILE  = 'rode-fotos-sources.json'
 
 export const DB_NAME    = 'rode-fotos'
-export const DB_VERSION = 1
+export const DB_VERSION = 2

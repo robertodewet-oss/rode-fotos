@@ -120,14 +120,6 @@ export async function getDownloadUrl(driveId, itemId) {
   return data?.['@microsoft.graph.downloadUrl'] || null
 }
 
-// Obtiene la URL de miniatura (medium) de un item de OneDrive
-export async function getThumbnailUrl(driveId, itemId, size = 'medium') {
-  try {
-    const data = await g(`/drives/${driveId}/items/${itemId}/thumbnails/0/${size}`)
-    return data?.url || null
-  } catch { return null }
-}
-
 // URLs de miniatura de muchos items en peticiones $batch de 20 (el máximo de Graph). Devuelve Map itemId → url
 export async function getThumbnailUrls(items, size = 'medium') {
   const urls = new Map()

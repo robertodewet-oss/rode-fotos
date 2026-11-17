@@ -120,8 +120,9 @@ export function applyFilters() {
     list = list.filter(p => !hidden.has(deviceOf(p)))
   }
   if (filters.hiddenKinds.length > 0) {
+    // Cada foto pertenece a un solo tipo; las normales y las aún sin clasificar cuentan como "foto"
     const hidden = new Set(filters.hiddenKinds)
-    list = list.filter(p => !hidden.has(kindOf(p)))
+    list = list.filter(p => !hidden.has(kindOf(p) || 'foto'))
   }
   if (filters.tags.length > 0) {
     list = list.filter(p => filters.tags.every(t => p.tags?.includes(t)))

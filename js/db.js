@@ -43,6 +43,11 @@ export async function openDB() {
       if (!db.objectStoreNames.contains('config')) {
         db.createObjectStore('config', { keyPath: 'key' })
       }
+
+      // Vector de la IA por foto (solo en este dispositivo): permite reclasificar sin volver a descargar miniaturas
+      if (!db.objectStoreNames.contains('embeddings')) {
+        db.createObjectStore('embeddings', { keyPath: 'photoId' })
+      }
     }
   })
 }
@@ -90,6 +95,17 @@ export async function del(storeName, key) {
 export async function clearStore(storeName) {
   await openDB()
   return promisify(tx(storeName, 'readwrite').clear())
+}
+
+export async function getEmbeddings(photoIds) {
+  await openDB()
+  const store = tx('embeddings')
+  const rows = await Promise.all(photoIds.map(id => promisify(store.get(id))))
+  return new Map(rows.filter(Boolean).map(r => [r.photoId, r.vec]))
+}
+
+export async function saveEmbeddings(entries) {
+  return putAll('embeddings', entries.map(([photoId, vec]) => ({ photoId, vec })))
 }
 
 export async function getAllByIndex(storeName, indexName, value) {
