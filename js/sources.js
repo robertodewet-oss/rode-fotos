@@ -1,9 +1,9 @@
 import { getAccount, signIn } from './auth.js'
 import { getMyDrive, listRootChildren, listFolderChildren, getDelta, isVideoFile } from './graph.js'
 import { getSources, saveSource, deleteSource, savePhotos, deletePhotosBySource, savePhoto, saveThumbnail, getConfig, setConfig, getPhotos, getProjects, getTags } from './db.js'
-import { getState, setState, autoAssignProject, applyFilters } from './store.js'
+import { getState, setState, autoAssignProject, applyFilters, bestDate } from './store.js'
 import { scheduleSave } from './sync.js'
-import { notify, escHtml } from './ui.js'
+import { notify, escHtml, getErrorLog, clearErrorLog } from './ui.js'
 
 // ── Colores disponibles para proyectos/fuentes ─────────────────────────────
 export const SOURCE_COLORS = ['#4f46e5', '#0ea5e9', '#10b981', '#f59e0b', '#ef4444', '#8b5cf6', '#ec4899', '#14b8a6']
@@ -16,9 +16,42 @@ export function renderSourcesView(container) {
     <div id="sources-view">
       <h1>Fuentes de fotos</h1>
       <div class="source-grid" id="sources-grid"></div>
+      <div class="error-log">
+        <div class="error-log-header">
+          <h2>Registro de errores <small>(este dispositivo)</small></h2>
+          <button class="btn btn--secondary btn--sm" id="log-copy">📋 Copiar</button>
+          <button class="btn btn--sm" id="log-clear" style="color:var(--text-sm)">Borrar</button>
+        </div>
+        <div id="error-log-list"></div>
+      </div>
     </div>`
   renderSourceCards(container.querySelector('#sources-grid'))
+  renderErrorLog()
+
+  container.querySelector('#log-copy').addEventListener('click', async () => {
+    const text = getErrorLog().map(e => `${new Date(e.at).toLocaleString('es-MX')}  ${e.message}${e.detail ? ' — ' + e.detail : ''}`).join('\n')
+    try { await navigator.clipboard.writeText(text || 'Sin errores'); notify('Registro copiado', 'success') }
+    catch { notify('No se pudo copiar; selecciona el texto manualmente', 'error') }
+  })
+  container.querySelector('#log-clear').addEventListener('click', () => {
+    if (confirm('¿Borrar el registro de errores de este dispositivo?')) clearErrorLog()
+  })
 }
+
+function renderErrorLog() {
+  const list = document.getElementById('error-log-list')
+  if (!list) return
+  const log = getErrorLog().slice().reverse()
+  list.innerHTML = log.length
+    ? log.map(e => `
+      <div class="error-log-row">
+        <span class="error-log-time">${new Date(e.at).toLocaleString('es-MX', { dateStyle: 'short', timeStyle: 'medium' })}</span>
+        <span class="error-log-msg">${escHtml(e.message)}${e.detail ? `<br><small>${escHtml(e.detail)}</small>` : ''}</span>
+      </div>`).join('')
+    : '<div class="error-log-empty">Sin errores registrados</div>'
+}
+
+document.addEventListener('rode:errorlog', renderErrorLog)
 
 function renderSourceCards(grid) {
   const { sources } = getState()
@@ -204,9 +237,10 @@ export async function indexOneDriveSource(source, incremental = false) {
   setIndexingState(true, source.id, 0, 0, 'Iniciando...')
 
   try {
-    // "delta2_": la versión con videos necesita un primer escaneo completo
-    const deltaLink = incremental ? (await getConfig(`delta2_${source.id}`)) : null
-    const { items, deltaLink: newDelta } = await getDelta(source.driveId, source.folderId, deltaLink)
+    // Cambiar el prefijo fuerza un escaneo completo (p. ej. "delta3_": recalcular fechas)
+    const deltaLink = incremental ? (await getConfig(`delta3_${source.id}`)) : null
+    const { items, deltaLink: newDelta } = await getDelta(source.driveId, source.folderId, deltaLink,
+      n => setIndexingState(true, source.id, 0, 0, `Revisando OneDrive… ${n.toLocaleString('es-MX')} archivos`))
 
     setIndexingState(true, source.id, 0, items.length, `Indexando ${items.length} archivos...`)
 
@@ -226,7 +260,7 @@ export async function indexOneDriveSource(source, incremental = false) {
       }
     }
 
-    if (newDelta) await setConfig(`delta2_${source.id}`, newDelta)
+    if (newDelta) await setConfig(`delta3_${source.id}`, newDelta)
 
     // Actualizar fuente
     const updSource = { ...source, status: 'ok', photoCount: items.length, lastSync: Date.now() }
@@ -254,9 +288,8 @@ function buildOneDrivePhoto(item, sourceId, driveId, projects) {
   const fsi = item.fileSystemInfo || {}
   const lat = loc.latitude || null
   const lng = loc.longitude || null
-  const takenAt = photo.takenDateTime
-    ? new Date(photo.takenDateTime).getTime()
-    : (fsi.createdDateTime ? new Date(fsi.createdDateTime).getTime() : null)
+  const ms = s => (s ? new Date(s).getTime() : null)
+  const takenAt = bestDate(ms(photo.takenDateTime), item.name, ms(fsi.createdDateTime), ms(fsi.lastModifiedDateTime))
   const isVideo = !!item.video || item.file?.mimeType?.startsWith('video/') || isVideoFile(item.name)
 
   const p = {
@@ -276,6 +309,7 @@ function buildOneDrivePhoto(item, sourceId, driveId, projects) {
     projectId: null,
     tags: [],
     size: item.size || 0,
+    indexedAt: Date.now(),
   }
   p.projectId = autoAssignProject(p, projects)
   return p
@@ -345,9 +379,7 @@ export async function indexLocalSource(source) {
 
       const lat = exif.latitude ?? null
       const lng = exif.longitude ?? null
-      const takenAt = exif.DateTimeOriginal
-        ? new Date(exif.DateTimeOriginal).getTime()
-        : file.lastModified || null
+      const takenAt = bestDate(exif.DateTimeOriginal ? new Date(exif.DateTimeOriginal).getTime() : null, file.name, file.lastModified)
 
       const photoId = `loc_${source.id}_${btoa(unescape(encodeURIComponent(path))).replace(/=/g, '')}`
       let photo = {
@@ -365,6 +397,7 @@ export async function indexLocalSource(source) {
         projectId: null,
         tags: [],
         size: file.size,
+        indexedAt: Date.now(),
       }
       photo.projectId = autoAssignProject(photo, projects)
       photo = keepUserData(photo, existing)

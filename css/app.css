@@ -400,6 +400,22 @@ input, select, textarea { font: inherit; }
 
 .source-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: 16px; margin-bottom: 24px; }
 
+.error-log {
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 12px 16px;
+}
+.error-log-header { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; }
+.error-log-header h2 { font-size: 14px; font-weight: 600; flex: 1; }
+.error-log-header small { font-weight: 400; color: var(--text-sm); }
+#error-log-list { max-height: 320px; overflow-y: auto; font-size: 12px; }
+.error-log-row { display: flex; gap: 12px; padding: 6px 0; border-top: 1px solid var(--border); }
+.error-log-time { flex-shrink: 0; color: var(--text-sm); font-variant-numeric: tabular-nums; }
+.error-log-msg { overflow-wrap: anywhere; }
+.error-log-msg small { color: var(--text-sm); }
+.error-log-empty { color: var(--text-sm); padding: 6px 0; }
+
 .source-card {
   background: var(--bg-card);
   border-radius: var(--radius);

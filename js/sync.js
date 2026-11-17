@@ -5,6 +5,7 @@ import {
   getSources, saveSource, deleteSource, clearStore, getConfig, setConfig
 } from './db.js'
 import { setState, applyFilters } from './store.js'
+import { logError } from './ui.js'
 import { APP_INDEX_FILE, APP_PROJECTS_FILE, APP_TAGS_FILE, APP_SOURCES_FILE } from '../config.js'
 
 // eTag del índice en OneDrive la última vez que este dispositivo lo leyó o escribió
@@ -24,7 +25,7 @@ export async function syncFromCloud() {
     await setConfig(ETAG_KEY, etag)
     return true
   } catch (e) {
-    console.warn('[sync] syncFromCloud error:', e.message)
+    logError('No se pudo leer el índice de OneDrive', e.message)
     return false
   }
 }
@@ -68,17 +69,19 @@ async function mergeCloud() {
   for (const t of mergeById(await getTags(), tagsData?.tags || [])) await saveTag(t)
 }
 
-// Unión por id; si una foto está en ambos lados se conserva lo más reciente de cada dato editable
+// Unión por id; si una foto está en ambos lados se conserva lo más reciente de cada dato:
+// metadatos (fecha, GPS…) del índice más nuevo, tipo por versión de clasificación, etiquetas por fecha de cambio
 function mergePhotos(local, cloud) {
   const byId = new Map(local.map(p => [p.id, p]))
   for (const c of cloud) {
     const l = byId.get(c.id)
     if (!l) { byId.set(c.id, c); continue }
+    const base = (c.indexedAt || 0) > (l.indexedAt || 0) ? c : l
     const lk = l.kindV || 0, ck = c.kindV || 0
     const kindSrc = lk > ck || (lk === ck && l.kind) ? l : c
     const tagSrc = (l.tagsAt || 0) >= (c.tagsAt || 0) ? l : c
     byId.set(c.id, {
-      ...l,
+      ...base,
       kind: kindSrc.kind, kindV: kindSrc.kindV,
       tags: tagSrc.tags || [], tagsAt: tagSrc.tagsAt,
     })
@@ -126,7 +129,7 @@ async function doSave() {
     const etag = await writeAppFile(APP_INDEX_FILE, { photos: cleanPhotos, savedAt })
     if (etag) await setConfig(ETAG_KEY, etag)
   } catch (e) {
-    console.warn('[sync] saveToCloud error:', e.message)
+    logError('No se pudo guardar el índice en OneDrive', e.message)
   }
 }
 

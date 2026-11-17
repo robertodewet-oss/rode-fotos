@@ -11,12 +11,40 @@ export function emptyFilters() {
 }
 
 export const SCREENSHOT_NAME = /screenshot|screen shot|captura|scr_|pantallazo/i
+export const VIDEO_NAME = /\.(mp4|mov|m4v|3gp|webm|avi|mkv)$/i
+
+// Por extensión también: archivos indexados antes de que la app reconociera videos no traen mediaType
+export function isVideo(photo) {
+  return photo.mediaType === 'video' || VIDEO_NAME.test(photo.name || '')
+}
 
 // Tipo efectivo: reglas sin IA primero, luego lo que guardó el clasificador
 export function kindOf(photo) {
-  if (photo.mediaType === 'video') return 'video'
+  if (isVideo(photo)) return 'video'
   if (SCREENSHOT_NAME.test(photo.name || '')) return 'captura'
   return photo.kind || null
+}
+
+// Fecha escrita en el nombre por cámaras y apps: IMG_20231105_143022, PXL_20231105_143022123,
+// Screenshot_2023-11-05-14-30-22, "WhatsApp Image 2023-11-05 at 14.30.22", IMG-20231105-WA0001…
+const NAME_DATE = /(?:^|[^\d])(20\d{2})[-_.]?(0[1-9]|1[0-2])[-_.]?(0[1-9]|[12]\d|3[01])(?:[ _T-]*(?:at )?([01]\d|2[0-3])[.:_-]?([0-5]\d)[.:_-]?([0-5]\d))?/
+
+export function dateFromName(name = '') {
+  const m = NAME_DATE.exec(name)
+  if (!m) return null
+  const [, y, mo, d, h = 12, mi = 0, s = 0] = m
+  const t = new Date(+y, +mo - 1, +d, +h, +mi, +s).getTime()
+  return t <= Date.now() + 86400000 ? t : null
+}
+
+// Fecha más confiable de un archivo: captura (EXIF) → nombre → la más antigua entre creación y modificación.
+// La "creación" de OneDrive suele ser la fecha en que se subió; la modificación conserva la del teléfono.
+export function bestDate(takenAt, name, ...fileDates) {
+  if (takenAt) return takenAt
+  const fromName = dateFromName(name)
+  if (fromName) return fromName
+  const valid = fileDates.filter(Boolean)
+  return valid.length ? Math.min(...valid) : null
 }
 
 // '' agrupa los archivos sin datos de cámara

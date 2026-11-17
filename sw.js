@@ -1,8 +1,10 @@
-const CACHE = 'rode-fotos-v11'
+const CACHE = 'rode-fotos-v12'
 const PRECACHE = [
   './',
   './index.html',
   './manifest.json',
+  './icon-192.png',
+  './icon-512.png',
   './config.js',
   './css/app.css',
   './js/auth.js',

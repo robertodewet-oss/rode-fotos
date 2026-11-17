@@ -9,13 +9,16 @@ import { initMapView, updateMapPhotos, resizeMap } from './mapView.js'
 import { renderSourcesView, connectOneDrive, addLocalFolder, syncAllSources } from './sources.js'
 import { renderProjectsView } from './projects.js'
 import { showExportDialog } from './export.js'
-import { notify, escHtml } from './ui.js'
+import { notify, escHtml, logError } from './ui.js'
+import { throttledUntil } from './graph.js'
 
 export { notify }
 
 // ── Init ──────────────────────────────────────────────────────────────────
 
 export async function init() {
+  window.addEventListener('error', e => logError('Error inesperado', `${e.message} (${e.filename?.split('/').pop()}:${e.lineno})`))
+  window.addEventListener('unhandledrejection', e => logError('Error inesperado', e.reason?.message || String(e.reason)))
   await openDB()
   await initAuth()
   initViewer()
@@ -301,6 +304,8 @@ function renderApp() {
   // Poblar filtros con datos actuales
   updateFilterDropdowns()
   updateClassifyStatus()
+  // Durante una pausa por límites de OneDrive no hay cambios de estado: refrescar la cuenta regresiva
+  setInterval(() => { if (getState().classifying.active) updateClassifyStatus() }, 2000)
 
   navigate(location.hash.slice(1) || 'gallery')
 
@@ -349,6 +354,11 @@ function updateClassifyStatus() {
     if (classifying.message) { el.textContent = classifying.message; return }
     const fmt = n => n.toLocaleString('es-MX')
     let text = `Clasificando con IA: ${fmt(classifying.done)} de ${fmt(classifying.total)}`
+    const waitSec = Math.ceil((throttledUntil() - Date.now()) / 1000)
+    if (waitSec > 0) {
+      el.textContent = `${text} · en pausa: OneDrive pidió esperar (~${waitSec} s)`
+      return
+    }
     if (classifying.perSec) {
       const mins = Math.ceil((classifying.total - classifying.done) / classifying.perSec / 60)
       const left = mins >= 60 ? `${Math.floor(mins / 60)} h ${mins % 60} min` : `${mins} min`
