@@ -750,6 +750,7 @@ input, select, textarea { font: inherit; }
   }
   .sidebar-section, .sidebar-divider, #sidebar-bottom, .sidebar-filters { display: none; }
   .only-mobile { display: block; }
+  .hide-mobile { display: none; }
   .dd-panel { position: fixed; left: 12px; right: 12px; top: auto; min-width: 0; }
   .nav-item {
     flex: 1;

@@ -464,6 +464,11 @@ export async function syncSource(sourceId) {
   }
 }
 
+export async function syncAllSources() {
+  if (getState().indexing.active) return
+  for (const src of getState().sources) await syncSource(src.id)
+}
+
 // ── Eliminar fuente ───────────────────────────────────────────────────────
 
 function confirmRemoveSource(sourceId) {

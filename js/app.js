@@ -6,7 +6,7 @@ import { loadFromCloud } from './sync.js'
 import { initGallery, updateGallery } from './gallery.js'
 import { initViewer } from './viewer.js'
 import { initMapView, updateMapPhotos, resizeMap } from './mapView.js'
-import { renderSourcesView, connectOneDrive, addLocalFolder } from './sources.js'
+import { renderSourcesView, connectOneDrive, addLocalFolder, syncAllSources } from './sources.js'
 import { renderProjectsView } from './projects.js'
 import { showExportDialog } from './export.js'
 import { notify, escHtml } from './ui.js'
@@ -135,6 +135,7 @@ function renderApp() {
         <button id="btn-clear-filters">✕ Limpiar</button>
       </div>
       <div style="margin-left:auto;display:flex;align-items:center;gap:8px">
+        <button class="btn btn--secondary btn--sm" id="btn-refresh" title="Buscar fotos y videos nuevos en todas las fuentes">🔄<span class="hide-mobile"> Actualizar</span></button>
         <div class="user-chip" id="user-menu-btn" style="color:var(--text);padding:4px 8px;border-radius:6px;cursor:pointer">
           <div class="user-avatar">${initials}</div>
           <span class="user-name" style="max-width:120px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:12px">${account?.name || 'Usuario'}</span>
@@ -199,6 +200,13 @@ function renderApp() {
     await signOut()
     setState({ user: null, photos: [], filtered: [], projects: [], tags: [], sources: [] })
     renderWelcome()
+  })
+
+  document.getElementById('btn-refresh').addEventListener('click', async e => {
+    const btn = e.currentTarget
+    if (!getState().sources.length) { notify('Primero agrega una fuente en Fuentes'); return }
+    btn.disabled = true
+    try { await syncAllSources() } finally { btn.disabled = false }
   })
 
   // User menu
