@@ -58,21 +58,20 @@ export async function startClassification() {
     while (pending.length) {
       setStatus({ active: true, done: 0, total: pending.length, message: 'Preparando modelo de IA…' })
       const model = await loadModel()
-      let batch = []
+      let results = []
       for (let i = 0; i < pending.length; i++) {
         const photo = pending[i]
+        _attempted.add(photo.id)
         setStatus({ active: true, done: i, total: pending.length, message: '' })
         try {
           const kind = await classifyPhoto(model, photo)
-          if (kind) batch.push(Object.assign(photo, { kind, kindV: KIND_VERSION }))
+          if (kind) results.push([photo.id, kind])
         } catch (e) {
           console.warn('[classify]', photo.name, e.message)
         }
-        if (batch.length >= 20 || i === pending.length - 1) {
-          if (batch.length) await savePhotos(batch)
-          batch = []
-          applyFilters()
-          scheduleSave()
+        if (results.length >= 20 || i === pending.length - 1) {
+          await saveResults(results)
+          results = []
         }
       }
       pending = getPending()
@@ -85,9 +84,29 @@ export async function startClassification() {
   }
 }
 
+// Ya intentadas en esta sesión; las que fallaron (sin miniatura, sin red…) se reintentan al volver a abrir la app
+const _attempted = new Set()
+
 function getPending() {
+  const here = new Set(getState().sources.map(s => s.id))
   return getState().photos.filter(p =>
-    p.mediaType !== 'video' && !SCREENSHOT_NAME.test(p.name || '') && (p.kindV || 0) < KIND_VERSION)}
+    p.mediaType !== 'video' && !SCREENSHOT_NAME.test(p.name || '') && (p.kindV || 0) < KIND_VERSION &&
+    !_attempted.has(p.id) && (p.sourceType !== 'local' || here.has(p.sourceId)))
+}
+
+// Aplica sobre la versión actual de cada foto: el estado puede haberse recargado desde la nube mientras tanto
+async function saveResults(results) {
+  if (!results.length) return
+  const byId = new Map(getState().photos.map(p => [p.id, p]))
+  const updated = []
+  for (const [id, kind] of results) {
+    const p = byId.get(id)
+    if (p) updated.push(Object.assign(p, { kind, kindV: KIND_VERSION }))
+  }
+  if (updated.length) await savePhotos(updated)
+  applyFilters()
+  scheduleSave()
+}
 
 function setStatus(classifying) {
   setState({ classifying })

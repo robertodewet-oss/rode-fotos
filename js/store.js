@@ -62,8 +62,10 @@ function _emit() { _listeners.forEach(fn => fn(_state)) }
 // ── Helpers de filtrado ────────────────────────────────────────────────────
 
 export function applyFilters() {
-  const { photos, filters } = _state
-  let list = photos
+  const { photos, filters, sources } = _state
+  // Fotos de carpetas locales de otro dispositivo: siguen en el índice pero aquí no se pueden abrir
+  const here = new Set(sources.map(s => s.id))
+  let list = photos.filter(p => p.sourceType !== 'local' || here.has(p.sourceId))
 
   if (filters.projectId !== null) {
     list = list.filter(p => p.projectId === filters.projectId)

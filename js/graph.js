@@ -101,7 +101,18 @@ export async function readAppFile(filename) {
   }
 }
 
-// Sube/reemplaza un archivo JSON en el approot
+// eTag del archivo en el approot (cambia cada vez que algún dispositivo lo escribe); null si no existe
+export async function getAppFileETag(filename) {
+  try {
+    const item = await g(`/me/drive/special/approot:/${encodeURIComponent(filename)}?$select=id,eTag`)
+    return item?.eTag || null
+  } catch (e) {
+    if (e.message.includes('404') || e.message.includes('itemNotFound')) return null
+    throw e
+  }
+}
+
+// Sube/reemplaza un archivo JSON en el approot; devuelve el eTag nuevo
 export async function writeAppFile(filename, data) {
   const token = await getAccessToken()
   const res = await fetch(`${BASE}/me/drive/special/approot:/${encodeURIComponent(filename)}:/content`, {
@@ -110,6 +121,8 @@ export async function writeAppFile(filename, data) {
     body: JSON.stringify(data),
   })
   if (!res.ok) throw new Error(`Graph write ${res.status}`)
+  const item = await res.json().catch(() => null)
+  return item?.eTag || null
 }
 
 // Obtiene info del drive personal

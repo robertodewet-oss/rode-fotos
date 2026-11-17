@@ -79,7 +79,13 @@ export async function connectOneDrive() {
     const folder = await showFolderPicker(drive.id)
     if (!folder) return
 
-    const id = crypto.randomUUID()
+    // Id derivado de la carpeta: así es la misma fuente en todos tus dispositivos
+    const id = `od-${drive.id}-${folder.id}`
+    if (getState().sources.some(s => s.id === id)) {
+      notify(`"${folder.name}" ya está conectada; buscando fotos nuevas…`)
+      await syncSource(id)
+      return
+    }
     const source = {
       id,
       type: 'onedrive',

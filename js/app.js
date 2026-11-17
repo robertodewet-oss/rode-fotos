@@ -2,7 +2,7 @@ import { initAuth, signIn, signOut, getAccount } from './auth.js'
 import { openDB, getPhotos, getProjects, getTags, getSources } from './db.js'
 import { getState, setState, applyFilters, clearSelection, subscribe, emptyFilters, kindOf, deviceOf } from './store.js'
 import { startClassification } from './classify.js'
-import { loadFromCloud } from './sync.js'
+import { syncFromCloud, reloadState } from './sync.js'
 import { initGallery, updateGallery } from './gallery.js'
 import { initViewer } from './viewer.js'
 import { initMapView, updateMapPhotos, resizeMap } from './mapView.js'
@@ -45,14 +45,17 @@ async function loadAppData() {
   setState({ photos, projects, tags, sources })
   applyFilters()
 
-  // 2. Si IndexedDB está vacío, intentar cargar desde la nube
+  // 2. Traer lo que otros dispositivos guardaron en OneDrive (clasificación, etiquetas, proyectos).
+  //    Sin datos locales se espera; si ya hay, se hace en segundo plano para no retrasar la galería.
   if (!photos.length) {
-    const loaded = await loadFromCloud()
-    if (loaded) {
-      const [photos2, projects2, tags2] = await Promise.all([getPhotos(), getProjects(), getTags()])
-      setState({ photos: photos2, projects: projects2, tags: tags2 })
-      applyFilters()
-    }
+    if (await syncFromCloud()) await reloadState()
+  } else {
+    syncFromCloud().then(async changed => {
+      if (!changed) return
+      await reloadState()
+      updateActiveView()
+      notify('Índice actualizado desde OneDrive')
+    })
   }
 }
 
@@ -204,9 +207,12 @@ function renderApp() {
 
   document.getElementById('btn-refresh').addEventListener('click', async e => {
     const btn = e.currentTarget
-    if (!getState().sources.length) { notify('Primero agrega una fuente en Fuentes'); return }
     btn.disabled = true
-    try { await syncAllSources() } finally { btn.disabled = false }
+    try {
+      if (await syncFromCloud()) { await reloadState(); updateActiveView() }
+      if (!getState().sources.length) { notify('Primero agrega una fuente en Fuentes'); return }
+      await syncAllSources()
+    } finally { btn.disabled = false }
   })
 
   // User menu
@@ -578,7 +584,7 @@ async function showTagDialog() {
     const updatedPhotos = getState().photos.map(p => {
       if (!selection.has(p.id)) return p
       const newTags = [...new Set([...(p.tags || []), ...checked])]
-      return { ...p, tags: newTags }
+      return { ...p, tags: newTags, tagsAt: Date.now() }
     })
     await dbSavePhotos(updatedPhotos)
     setState({ photos: updatedPhotos })

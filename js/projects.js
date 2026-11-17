@@ -186,6 +186,7 @@ function showProjectForm(projectId, defaultLat = null, defaultLng = null) {
       id: existing?.id ?? crypto.randomUUID(),
       name, lat: latVal, lng: lngVal, radius, color: currentColor,
       createdAt: existing?.createdAt ?? Date.now(),
+      updatedAt: Date.now(),
     }
     await saveProject(project)
     close()
