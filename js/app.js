@@ -1,6 +1,7 @@
 import { initAuth, signIn, signOut, getAccount } from './auth.js'
 import { openDB, getPhotos, getProjects, getTags, getSources } from './db.js'
-import { getState, setState, applyFilters, clearSelection, subscribe } from './store.js'
+import { getState, setState, applyFilters, clearSelection, subscribe, emptyFilters, kindOf, deviceOf } from './store.js'
+import { startClassification } from './classify.js'
 import { loadFromCloud } from './sync.js'
 import { initGallery, updateGallery } from './gallery.js'
 import { initViewer } from './viewer.js'
@@ -116,9 +117,20 @@ function renderApp() {
         </select>
         <input type="date" id="f-date-from" class="filter-date" title="Desde">
         <input type="date" id="f-date-to" class="filter-date" title="Hasta">
-        <select id="f-device" class="filter-select">
-          <option value="">Todos los dispositivos</option>
-        </select>
+        <details class="filter-dd" id="f-devices">
+          <summary class="filter-select">Dispositivos</summary>
+          <div class="dd-panel">
+            <div class="dd-actions">
+              <button type="button" data-dev-all="1">Todos</button>
+              <button type="button" data-dev-all="0">Ninguno</button>
+            </div>
+            <div id="f-devices-list"></div>
+          </div>
+        </details>
+        <details class="filter-dd only-mobile">
+          <summary class="filter-select">Tipos</summary>
+          <div class="dd-panel" data-kind-list></div>
+        </details>
         <span id="filter-count"></span>
         <button id="btn-clear-filters">✕ Limpiar</button>
       </div>
@@ -137,6 +149,11 @@ function renderApp() {
         </div>
         <div class="nav-item" data-view="map">
           <span class="icon">🗺️</span> Mapa
+        </div>
+        <div class="sidebar-filters">
+          <div class="sidebar-section">Tipos</div>
+          <div class="sidebar-kinds" data-kind-list></div>
+          <div id="classify-status"></div>
         </div>
         <div class="sidebar-divider"></div>
         <div class="sidebar-section">Gestión</div>
@@ -204,17 +221,43 @@ function renderApp() {
     setState({ filters: { ...getState().filters, dateTo: val } })
     applyFilters(); updateActiveView()
   })
-  document.getElementById('f-device').addEventListener('change', e => {
-    setState({ filters: { ...getState().filters, device: e.target.value || null } })
-    applyFilters(); updateActiveView()
+  const devList = document.getElementById('f-devices-list')
+  devList.addEventListener('change', e => {
+    const dev = e.target.dataset.device
+    if (dev === undefined) return
+    toggleHidden('hiddenDevices', dev, !e.target.checked)
   })
+  document.querySelectorAll('[data-dev-all]').forEach(btn => btn.addEventListener('click', () => {
+    const all = btn.dataset.devAll === '1'
+    const hiddenDevices = all ? [] : [...devList.querySelectorAll('input[data-device]')].map(i => i.dataset.device)
+    setState({ filters: { ...getState().filters, hiddenDevices } })
+    syncCheckboxes(); applyFilters(); updateActiveView()
+  }))
+
+  document.querySelectorAll('[data-kind-list]').forEach(list => {
+    list.innerHTML = KIND_FILTERS.map(([kind, label]) => `
+      <label class="check-row">
+        <input type="checkbox" data-kind="${kind}" checked>
+        <span>${label}</span>
+        <span class="check-count" data-kind-count="${kind}"></span>
+      </label>`).join('')
+    list.addEventListener('change', e => {
+      const kind = e.target.dataset.kind
+      if (kind) toggleHidden('hiddenKinds', kind, !e.target.checked)
+    })
+  })
+
+  // Cerrar desplegables al hacer clic fuera
+  document.addEventListener('click', e => {
+    document.querySelectorAll('details.filter-dd[open]').forEach(d => { if (!d.contains(e.target)) d.open = false })
+  })
+
   document.getElementById('btn-clear-filters').addEventListener('click', () => {
-    setState({ filters: { projectId: null, dateFrom: null, dateTo: null, device: null, tags: [] } })
+    setState({ filters: emptyFilters() })
     document.getElementById('f-project').value = ''
     document.getElementById('f-date-from').value = ''
     document.getElementById('f-date-to').value = ''
-    document.getElementById('f-device').value = ''
-    applyFilters(); updateActiveView()
+    syncCheckboxes(); applyFilters(); updateActiveView()
   })
 
   // Selection bar
@@ -230,17 +273,68 @@ function renderApp() {
   document.getElementById('btn-sel-tag').addEventListener('click', showTagDialog)
 
   // Suscribirse a cambios de estado
-  subscribe(() => {
+  let wasIndexing = getState().indexing.active
+  subscribe(state => {
     updateSelectionBar()
     updateFilterCount()
     updateIndexingProgress()
     updateFilterDropdowns()
+    updateClassifyStatus()
+    if (wasIndexing && !state.indexing.active) startClassification()
+    wasIndexing = state.indexing.active
   })
 
   // Poblar filtros con datos actuales
   updateFilterDropdowns()
+  updateClassifyStatus()
 
   navigate(location.hash.slice(1) || 'gallery')
+
+  // Dar tiempo a que cargue la galería antes de empezar a descargar el modelo
+  setTimeout(startClassification, 3000)
+}
+
+const KIND_FILTERS = [
+  ['personas', '👥 Personas'],
+  ['selfie', '🤳 Selfies'],
+  ['captura', '📱 Capturas de pantalla'],
+  ['grafico', '🎨 Gráficos'],
+  ['documento', '🧾 Documentos'],
+  ['video', '🎬 Videos'],
+]
+
+function toggleHidden(key, value, hide) {
+  const filters = getState().filters
+  const set = new Set(filters[key])
+  if (hide) set.add(value); else set.delete(value)
+  setState({ filters: { ...filters, [key]: [...set] } })
+  syncCheckboxes(); applyFilters(); updateActiveView()
+}
+
+// Mantiene iguales las casillas del menú lateral y del desplegable móvil
+function syncCheckboxes() {
+  const { hiddenKinds, hiddenDevices } = getState().filters
+  document.querySelectorAll('input[data-kind]').forEach(i => { i.checked = !hiddenKinds.includes(i.dataset.kind) })
+  document.querySelectorAll('input[data-device]').forEach(i => { i.checked = !hiddenDevices.includes(i.dataset.device) })
+  const summary = document.querySelector('#f-devices summary')
+  if (summary) summary.textContent = hiddenDevices.length ? `Dispositivos (${hiddenDevices.length} ocultos)` : 'Dispositivos'
+}
+
+function updateClassifyStatus() {
+  const { photos, classifying } = getState()
+  const counts = {}
+  for (const p of photos) { const k = kindOf(p); if (k) counts[k] = (counts[k] || 0) + 1 }
+  document.querySelectorAll('[data-kind-count]').forEach(el => {
+    el.textContent = counts[el.dataset.kindCount] || ''
+  })
+
+  const el = document.getElementById('classify-status')
+  if (!el) return
+  if (classifying.active) {
+    el.textContent = classifying.message || `Clasificando con IA… ${classifying.done} de ${classifying.total}`
+  } else {
+    el.textContent = ''
+  }
 }
 
 // ── Routing ───────────────────────────────────────────────────────────────
@@ -383,8 +477,8 @@ function updateIndexingProgress() {
 function updateFilterDropdowns() {
   const { projects, photos } = getState()
   const fpSel = document.getElementById('f-project')
-  const fdSel = document.getElementById('f-device')
-  if (!fpSel || !fdSel) return
+  const devList = document.getElementById('f-devices-list')
+  if (!fpSel || !devList) return
 
   const curProj = fpSel.value
   fpSel.innerHTML = '<option value="">Todos los proyectos</option>'
@@ -395,15 +489,20 @@ function updateFilterDropdowns() {
     fpSel.appendChild(opt)
   }
 
-  const curDev = fdSel.value
-  const devices = [...new Set(photos.map(p => p.cameraModel || p.cameraMake).filter(Boolean))].sort()
-  fdSel.innerHTML = '<option value="">Todos los dispositivos</option>'
-  for (const d of devices) {
-    const opt = document.createElement('option')
-    opt.value = d; opt.textContent = d
-    if (opt.value === curDev) opt.selected = true
-    fdSel.appendChild(opt)
-  }
+  const counts = new Map()
+  for (const p of photos) { const d = deviceOf(p); counts.set(d, (counts.get(d) || 0) + 1) }
+  const devices = [...counts.keys()].sort((a, b) => (a === '') - (b === '') || a.localeCompare(b))
+  const signature = devices.map(d => `${d}:${counts.get(d)}`).join('|')
+  // Reconstruir solo si cambió la lista, para no interrumpir clics en el desplegable
+  if (devList.dataset.signature === signature) return
+  devList.dataset.signature = signature
+  const { hiddenDevices } = getState().filters
+  devList.innerHTML = devices.map(d => `
+    <label class="check-row">
+      <input type="checkbox" data-device="${escHtml(d)}" ${hiddenDevices.includes(d) ? '' : 'checked'}>
+      <span>${d ? escHtml(d) : '<em>Sin datos de cámara</em>'}</span>
+      <span class="check-count">${counts.get(d)}</span>
+    </label>`).join('') || '<div class="check-empty">Sin fotos</div>'
 }
 
 // ── Diálogo de etiquetas ──────────────────────────────────────────────────

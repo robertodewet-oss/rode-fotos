@@ -1,7 +1,9 @@
 import { getState } from './store.js'
 import { getThumbnail } from './db.js'
-import { downloadItem } from './graph.js'
+import { downloadItem, getDownloadUrl } from './graph.js'
 import { getAccount } from './auth.js'
+import { notify } from './ui.js'
+import { getLocalFile } from './sources.js'
 
 let _photos = []
 let _idx = 0
@@ -17,9 +19,33 @@ export function openViewer(photos, idx) {
 export function closeViewer() {
   const overlay = document.getElementById('viewer-overlay')
   overlay.classList.add('hidden')
+  _photos = []
   const img = document.getElementById('viewer-img')
   if (img.src.startsWith('blob:')) URL.revokeObjectURL(img.src)
   img.src = ''
+  stopVideo()
+}
+
+function getVideoEl() {
+  let v = document.getElementById('viewer-video')
+  if (!v) {
+    v = document.createElement('video')
+    v.id = 'viewer-video'
+    v.controls = true
+    v.playsInline = true
+    document.getElementById('viewer-img-wrap').prepend(v)
+  }
+  return v
+}
+
+function stopVideo() {
+  const v = document.getElementById('viewer-video')
+  if (!v) return
+  v.pause()
+  if (v.src.startsWith('blob:')) URL.revokeObjectURL(v.src)
+  v.removeAttribute('src')
+  v.load()
+  v.style.display = 'none'
 }
 
 function renderViewer() {
@@ -27,14 +53,28 @@ function renderViewer() {
   if (!photo) return
 
   const img = document.getElementById('viewer-img')
+  if (img.src.startsWith('blob:')) URL.revokeObjectURL(img.src)
   img.src = ''
   img.style.opacity = '0'
+  stopVideo()
 
-  loadFullImage(photo).then(url => {
-    if (!url) return
-    img.onload = () => { img.style.opacity = '1' }
-    img.src = url
-  })
+  if (photo.mediaType === 'video') {
+    img.style.display = 'none'
+    const video = getVideoEl()
+    video.style.display = ''
+    loadVideoUrl(photo).then(url => {
+      if (_photos[_idx] !== photo) { if (url?.startsWith('blob:')) URL.revokeObjectURL(url); return }
+      if (url) { video.src = url; video.play().catch(() => {}) }
+      else notify('No se pudo abrir el video', 'error')
+    })
+  } else {
+    img.style.display = ''
+    loadFullImage(photo).then(url => {
+      if (!url || _photos[_idx] !== photo) return
+      img.onload = () => { img.style.opacity = '1' }
+      img.src = url
+    })
+  }
 
   // Info panel
   const { projects, tags } = getState()
@@ -102,6 +142,19 @@ async function loadFullImage(photo) {
       return URL.createObjectURL(blob)
     } catch { return null }
   }
+  return null
+}
+
+async function loadVideoUrl(photo) {
+  try {
+    if (photo.sourceType === 'onedrive' && getAccount()) {
+      return await getDownloadUrl(photo.driveId, photo.itemId)
+    }
+    if (photo.sourceType === 'local') {
+      const file = await getLocalFile(photo)
+      return file ? URL.createObjectURL(file) : null
+    }
+  } catch {}
   return null
 }
 

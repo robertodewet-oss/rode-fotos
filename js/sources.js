@@ -1,5 +1,5 @@
 import { getAccount, signIn } from './auth.js'
-import { getMyDrive, listRootChildren, listFolderChildren, getDelta, getThumbnailUrl } from './graph.js'
+import { getMyDrive, listRootChildren, listFolderChildren, getDelta, isVideoFile } from './graph.js'
 import { getSources, saveSource, deleteSource, savePhotos, deletePhotosBySource, savePhoto, saveThumbnail, getConfig, setConfig, getPhotos, getProjects, getTags } from './db.js'
 import { getState, setState, autoAssignProject, applyFilters } from './store.js'
 import { scheduleSave } from './sync.js'
@@ -198,17 +198,19 @@ export async function indexOneDriveSource(source, incremental = false) {
   setIndexingState(true, source.id, 0, 0, 'Iniciando...')
 
   try {
-    const deltaLink = incremental ? (await getConfig(`delta_${source.id}`)) : null
+    // "delta2_": la versión con videos necesita un primer escaneo completo
+    const deltaLink = incremental ? (await getConfig(`delta2_${source.id}`)) : null
     const { items, deltaLink: newDelta } = await getDelta(source.driveId, source.folderId, deltaLink)
 
-    setIndexingState(true, source.id, 0, items.length, `Indexando ${items.length} fotos...`)
+    setIndexingState(true, source.id, 0, items.length, `Indexando ${items.length} archivos...`)
 
+    const existing = new Map(getState().photos.map(p => [p.id, p]))
     const photos = []
     for (let i = 0; i < items.length; i++) {
       const item = items[i]
       setIndexingState(true, source.id, i + 1, items.length, `${item.name}`)
 
-      const photo = buildOneDrivePhoto(item, source.id, source.driveId, projects)
+      const photo = keepUserData(buildOneDrivePhoto(item, source.id, source.driveId, projects), existing)
       photos.push(photo)
 
       // Guardar en lotes de 50
@@ -218,7 +220,7 @@ export async function indexOneDriveSource(source, incremental = false) {
       }
     }
 
-    if (newDelta) await setConfig(`delta_${source.id}`, newDelta)
+    if (newDelta) await setConfig(`delta2_${source.id}`, newDelta)
 
     // Actualizar fuente
     const updSource = { ...source, status: 'ok', photoCount: items.length, lastSync: Date.now() }
@@ -234,6 +236,12 @@ export async function indexOneDriveSource(source, incremental = false) {
   }
 }
 
+function keepUserData(photo, existing) {
+  const old = existing.get(photo.id)
+  if (!old) return photo
+  return { ...photo, tags: old.tags || [], kind: old.kind, kindV: old.kindV }
+}
+
 function buildOneDrivePhoto(item, sourceId, driveId, projects) {
   const photo = item.photo || {}
   const loc = item.location || {}
@@ -243,6 +251,7 @@ function buildOneDrivePhoto(item, sourceId, driveId, projects) {
   const takenAt = photo.takenDateTime
     ? new Date(photo.takenDateTime).getTime()
     : (fsi.createdDateTime ? new Date(fsi.createdDateTime).getTime() : null)
+  const isVideo = !!item.video || item.file?.mimeType?.startsWith('video/') || isVideoFile(item.name)
 
   const p = {
     id: `od_${sourceId}_${item.id}`,
@@ -251,6 +260,8 @@ function buildOneDrivePhoto(item, sourceId, driveId, projects) {
     driveId,
     itemId: item.id,
     name: item.name,
+    mediaType: isVideo ? 'video' : 'image',
+    duration: item.video?.duration || null,
     takenAt,
     lat,
     lng,
@@ -259,7 +270,6 @@ function buildOneDrivePhoto(item, sourceId, driveId, projects) {
     projectId: null,
     tags: [],
     size: item.size || 0,
-    thumbnailUrl: null,
   }
   p.projectId = autoAssignProject(p, projects)
   return p
@@ -311,17 +321,21 @@ export async function indexLocalSource(source) {
     const files = await collectImageFiles(dirHandle)
     setIndexingState(true, source.id, 0, files.length, `${files.length} imágenes encontradas`)
 
+    const existing = new Map(getState().photos.map(p => [p.id, p]))
     const photos = []
     for (let i = 0; i < files.length; i++) {
       const { file, path } = files[i]
       setIndexingState(true, source.id, i + 1, files.length, path)
+      const isVideo = isVideoFile(file.name)
 
       let exif = {}
-      try {
-        exif = await exifr.parse(file, {
-          pick: ['DateTimeOriginal', 'latitude', 'longitude', 'Make', 'Model'],
-        }) || {}
-      } catch {}
+      if (!isVideo) {
+        try {
+          exif = await exifr.parse(file, {
+            pick: ['DateTimeOriginal', 'latitude', 'longitude', 'Make', 'Model'],
+          }) || {}
+        } catch {}
+      }
 
       const lat = exif.latitude ?? null
       const lng = exif.longitude ?? null
@@ -330,12 +344,13 @@ export async function indexLocalSource(source) {
         : file.lastModified || null
 
       const photoId = `loc_${source.id}_${btoa(unescape(encodeURIComponent(path))).replace(/=/g, '')}`
-      const photo = {
+      let photo = {
         id: photoId,
         sourceType: 'local',
         sourceId: source.id,
         localPath: path,
         name: file.name,
+        mediaType: isVideo ? 'video' : 'image',
         takenAt,
         lat,
         lng,
@@ -344,13 +359,13 @@ export async function indexLocalSource(source) {
         projectId: null,
         tags: [],
         size: file.size,
-        thumbnailUrl: null,
       }
       photo.projectId = autoAssignProject(photo, projects)
+      photo = keepUserData(photo, existing)
 
       // Generar miniatura y guardarla en IndexedDB
       try {
-        const thumbBlob = await generateThumbnail(file)
+        const thumbBlob = isVideo ? await generateVideoThumbnail(file) : await generateThumbnail(file)
         await saveThumbnail(photoId, thumbBlob)
       } catch {}
 
@@ -381,7 +396,7 @@ async function collectImageFiles(dirHandle, basePath = '') {
     if (entry.kind === 'directory') {
       const sub = await collectImageFiles(entry, path)
       files.push(...sub)
-    } else if (isImageFile(entry.name)) {
+    } else if (isImageFile(entry.name) || isVideoFile(entry.name)) {
       const file = await entry.getFile()
       files.push({ file, path })
     }
@@ -403,6 +418,38 @@ async function generateThumbnail(file, maxSize = 640) {
   canvas.getContext('2d').drawImage(bitmap, 0, 0, w, h)
   bitmap.close()
   return canvas.convertToBlob({ type: 'image/jpeg', quality: 0.82 })
+}
+
+async function generateVideoThumbnail(file, maxSize = 640) {
+  const url = URL.createObjectURL(file)
+  try {
+    const video = document.createElement('video')
+    video.muted = true
+    video.preload = 'metadata'
+    video.src = url
+    await new Promise((res, rej) => { video.onloadedmetadata = res; video.onerror = rej })
+    video.currentTime = Math.min(1, (video.duration || 0) / 2)
+    await new Promise((res, rej) => { video.onseeked = res; video.onerror = rej })
+    const scale = Math.min(maxSize / video.videoWidth, maxSize / video.videoHeight, 1)
+    const canvas = new OffscreenCanvas(Math.round(video.videoWidth * scale), Math.round(video.videoHeight * scale))
+    canvas.getContext('2d').drawImage(video, 0, 0, canvas.width, canvas.height)
+    return canvas.convertToBlob({ type: 'image/jpeg', quality: 0.82 })
+  } finally {
+    URL.revokeObjectURL(url)
+  }
+}
+
+export async function getLocalFile(photo) {
+  const source = getState().sources.find(s => s.id === photo.sourceId)
+  if (!source?.dirHandle || !photo.localPath) return null
+  if (await source.dirHandle.queryPermission({ mode: 'read' }) !== 'granted') {
+    if (await source.dirHandle.requestPermission({ mode: 'read' }) !== 'granted') return null
+  }
+  const parts = photo.localPath.split('/')
+  let dir = source.dirHandle
+  for (const part of parts.slice(0, -1)) dir = await dir.getDirectoryHandle(part)
+  const fh = await dir.getFileHandle(parts[parts.length - 1])
+  return fh.getFile()
 }
 
 // ── Sincronizar (incremental) ─────────────────────────────────────────────

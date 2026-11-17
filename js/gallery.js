@@ -11,7 +11,12 @@ const INFO_H = 36
 
 const _thumbUrls = new Map()
 
-window.RODE_GALLERY_VERSION = 6
+window.RODE_GALLERY_VERSION = 7
+
+function formatDuration(ms) {
+  const s = Math.round(ms / 1000)
+  return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`
+}
 
 class VirtualGallery {
   constructor(wrap) {
@@ -112,7 +117,8 @@ class VirtualGallery {
         <div class="thumb-project-dot" style="background:${proj?.color ?? '#94a3b8'}"></div>
         <div class="thumb-date">${date}</div>
       </div>
-      <div class="thumb-check">✓</div>`
+      <div class="thumb-check">✓</div>
+      ${photo.mediaType === 'video' ? `<div class="thumb-video">▶${photo.duration ? ' ' + formatDuration(photo.duration) : ''}</div>` : ''}`
     return el
   }
 

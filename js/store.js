@@ -1,4 +1,29 @@
 // Estado global reactivo de la app
+export function emptyFilters() {
+  return {
+    projectId: null,       // string | null
+    dateFrom: null,        // ms timestamp | null
+    dateTo: null,
+    hiddenDevices: [],     // deviceOf() de los dispositivos desmarcados
+    hiddenKinds: [],       // kindOf() de los tipos desmarcados
+    tags: [],              // string[]
+  }
+}
+
+export const SCREENSHOT_NAME = /screenshot|screen shot|captura|scr_|pantallazo/i
+
+// Tipo efectivo: reglas sin IA primero, luego lo que guardó el clasificador
+export function kindOf(photo) {
+  if (photo.mediaType === 'video') return 'video'
+  if (SCREENSHOT_NAME.test(photo.name || '')) return 'captura'
+  return photo.kind || null
+}
+
+// '' agrupa los archivos sin datos de cámara
+export function deviceOf(photo) {
+  return photo.cameraModel || photo.cameraMake || ''
+}
+
 const _state = {
   user: null,              // { displayName, mail }
   photos: [],              // todos los metadatos indexados
@@ -9,13 +34,8 @@ const _state = {
   selection: new Set(),    // IDs seleccionados
   lastSelectedId: null,    // para shift+click rango
   view: 'gallery',         // 'gallery' | 'map' | 'projects' | 'sources'
-  filters: {
-    projectId: null,       // string | null
-    dateFrom: null,        // ms timestamp | null
-    dateTo: null,
-    device: null,          // string | null
-    tags: [],              // string[]
-  },
+  filters: emptyFilters(),
+  classifying: { active: false, done: 0, total: 0, message: '' },
   indexing: {
     active: false,
     sourceId: null,
@@ -54,8 +74,13 @@ export function applyFilters() {
   if (filters.dateTo !== null) {
     list = list.filter(p => p.takenAt && p.takenAt <= filters.dateTo)
   }
-  if (filters.device !== null) {
-    list = list.filter(p => p.cameraMake === filters.device || p.cameraModel === filters.device)
+  if (filters.hiddenDevices.length > 0) {
+    const hidden = new Set(filters.hiddenDevices)
+    list = list.filter(p => !hidden.has(deviceOf(p)))
+  }
+  if (filters.hiddenKinds.length > 0) {
+    const hidden = new Set(filters.hiddenKinds)
+    list = list.filter(p => !hidden.has(kindOf(p)))
   }
   if (filters.tags.length > 0) {
     list = list.filter(p => filters.tags.every(t => p.tags?.includes(t)))

@@ -42,7 +42,7 @@ export async function listFolderChildren(driveId, folderId) {
 // Retorna { items, deltaLink }
 export async function getDelta(driveId, folderId, deltaLink = null) {
   const items = []
-  let url = deltaLink || `${BASE}/drives/${driveId}/items/${folderId}/delta?$select=id,name,file,photo,location,fileSystemInfo,deleted,size&$top=200`
+  let url = deltaLink || `${BASE}/drives/${driveId}/items/${folderId}/delta?$select=id,name,file,photo,video,location,fileSystemInfo,deleted,size&$top=200`
 
   while (url) {
     const token = await getAccessToken()
@@ -54,8 +54,8 @@ export async function getDelta(driveId, folderId, deltaLink = null) {
     const data = await res.json()
     if (data.value) {
       for (const item of data.value) {
-        // Filtrar solo imágenes (con faceta photo o extensión .jpg/.png etc.)
-        if (item.deleted || (!item.photo && !isImageFile(item.name))) continue
+        if (item.deleted) continue
+        if (!item.photo && !item.video && !isImageFile(item.name) && !isVideoFile(item.name)) continue
         if (!item.file) continue // es carpeta
         items.push(item)
       }
@@ -69,6 +69,16 @@ export async function getDelta(driveId, folderId, deltaLink = null) {
 
 function isImageFile(name = '') {
   return /\.(jpe?g|png|heic|heif|webp|tiff?|gif|bmp|raw|cr2|nef|arw)$/i.test(name)
+}
+
+export function isVideoFile(name = '') {
+  return /\.(mp4|mov|m4v|3gp|webm|avi|mkv)$/i.test(name)
+}
+
+// URL temporal pre-autenticada para reproducir un video sin descargarlo completo
+export async function getDownloadUrl(driveId, itemId) {
+  const data = await g(`/drives/${driveId}/items/${itemId}`)
+  return data?.['@microsoft.graph.downloadUrl'] || null
 }
 
 // Obtiene la URL de miniatura (medium) de un item de OneDrive

@@ -3,6 +3,7 @@ import { getThumbnail } from './db.js'
 import { downloadItem } from './graph.js'
 import { getAccount } from './auth.js'
 import { notify } from './ui.js'
+import { getLocalFile } from './sources.js'
 
 export function showExportDialog() {
   const { selection, filtered, projects } = getState()
@@ -71,7 +72,7 @@ export function showExportDialog() {
       try {
         const blob = await fetchPhotoBlob(photo)
         if (!blob) continue
-        const processed = opts.resize ? await resizeBlob(blob) : blob
+        const processed = opts.resize && photo.mediaType !== 'video' ? await resizeBlob(blob) : blob
         const filename = opts.rename ? buildName(photo, getState().projects, i) : photo.name
         triggerDownload(processed, filename)
         await new Promise(r => setTimeout(r, 200)) // pequeña pausa entre descargas
@@ -94,7 +95,7 @@ async function runExport(photos, opts, writeFn) {
     const photo = photos[i]
     let blob = await fetchPhotoBlob(photo)
     if (!blob) continue
-    if (opts.resize) blob = await resizeBlob(blob)
+    if (opts.resize && photo.mediaType !== 'video') blob = await resizeBlob(blob)
     const filename = opts.rename ? buildName(photo, getState().projects, i) : photo.name
     await writeFn(blob, filename, i + 1, photos.length)
   }
@@ -102,8 +103,9 @@ async function runExport(photos, opts, writeFn) {
 
 async function fetchPhotoBlob(photo) {
   if (photo.sourceType === 'local') {
-    // Para local usamos la miniatura grande (lo mejor que tenemos sin el fileHandle)
-    return getThumbnail(photo.id).catch(() => null)
+    const file = await getLocalFile(photo).catch(() => null)
+    if (file) return file
+    return photo.mediaType === 'video' ? null : getThumbnail(photo.id).catch(() => null)
   }
   if (photo.sourceType === 'onedrive' && getAccount()) {
     return downloadItem(photo.driveId, photo.itemId).catch(() => null)
