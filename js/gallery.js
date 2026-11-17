@@ -11,6 +11,8 @@ const INFO_H = 36
 
 const _thumbUrls = new Map()
 
+window.RODE_GALLERY_VERSION = 6
+
 class VirtualGallery {
   constructor(wrap) {
     this.wrap = wrap
@@ -128,8 +130,7 @@ class VirtualGallery {
       url = _thumbUrls.get(photo.id) || null
       if (!url && getAccount()) {
         try {
-          url = await getThumbnailUrl(photo.driveId, photo.itemId, 'c480x480')
-            || await getThumbnailUrl(photo.driveId, photo.itemId, 'large')
+          url = await getThumbnailUrl(photo.driveId, photo.itemId, 'large')
           if (url) _thumbUrls.set(photo.id, url)
         } catch {}
       }
