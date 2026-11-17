@@ -7,7 +7,7 @@
 // 4. Permisos API → Agregar: Files.Read, Files.ReadWrite.AppFolder, User.Read
 // 5. Copiar "Id. de aplicación (cliente)" y pegarlo abajo
 // ────────────────────────────────────────────────────────────────────────────
-export const CLIENT_ID = 'TU_CLIENT_ID_AQUI'   // ← reemplazar después del registro
+export const CLIENT_ID = 'b9f81d72-ab88-4b77-aee9-c94699163b67'
 
 export const MSAL_CONFIG = {
   auth: {
