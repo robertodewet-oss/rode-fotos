@@ -1,4 +1,4 @@
-const CACHE = 'rode-fotos-v17'
+const CACHE = 'rode-fotos-v18'
 const PRECACHE = [
   './',
   './index.html',
@@ -20,6 +20,7 @@ const PRECACHE = [
   './js/viewer.js',
   './js/export.js',
   './js/classify.js',
+  './js/clipWorker.js',
   './js/app.js',
 ]
 

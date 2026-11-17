@@ -59,15 +59,14 @@ export function canClassifyHere() {
   return window.matchMedia('(pointer: fine)').matches && window.innerWidth >= 768
 }
 
-const BATCH = 16             // fotos por pasada del modelo
-const PREFETCH = 2           // lotes descargándose mientras se analiza el actual
-const MAX_DOWNLOADS = 6      // miniaturas descargándose a la vez
+const PREFETCH = 3           // lotes descargándose mientras se analiza el actual
+const MAX_DOWNLOADS = 8      // miniaturas descargándose a la vez
 const UI_EVERY_MS = 1000     // con miles de fotos, refrescar la vista por cada foto es lo que más tarda
 const FILTER_EVERY_MS = 15000
 const CLOUD_EVERY_MS = 5 * 60000  // el índice pesa varios MB: subirlo de vez en cuando, no por lote
 
 // Ritmo adaptable: OneDrive bloquea por un rato si se le piden demasiadas miniaturas seguidas
-const RATE_MIN = 2, RATE_START = 8, RATE_MAX = 25
+const RATE_MIN = 3, RATE_START = 12, RATE_MAX = 40
 let _rate = RATE_START
 let _okStreak = 0
 let _nextStartAt = 0
@@ -88,21 +87,22 @@ export async function startClassification() {
       const t0 = Date.now()
       const before = classifiedTotal()
       const chunks = []
-      for (let i = 0; i < pending.length; i += BATCH) chunks.push(pending.slice(i, i + BATCH))
+      for (let i = 0; i < pending.length; i += model.batch) chunks.push(pending.slice(i, i + model.batch))
 
-      const inflight = chunks.slice(0, PREFETCH).map(c => prepareBatch(model.T, c))
+      const inflight = chunks.slice(0, PREFETCH).map(c => prepareBatch(c))
       let done = 0
       for (let b = 0; b < chunks.length; b++) {
         const ready = await inflight.shift()
-        if (b + PREFETCH < chunks.length) inflight.push(prepareBatch(model.T, chunks[b + PREFETCH]))
+        if (b + PREFETCH < chunks.length) inflight.push(prepareBatch(chunks[b + PREFETCH]))
 
         try {
           await saveResults(await classifyBatch(model, ready))
         } catch (e) {
           logError('Error de la IA al clasificar un lote', e.message)
-          if (model.device === 'webgpu') {
+          if (model.device !== 'wasm') {
             // La tarjeta gráfica puede perderse (driver, suspensión): seguir con el procesador
             _forceCpu = true
+            await model.visionModel?.dispose?.()
             _model = null
             model = await loadModel()
             await saveResults(await classifyBatch(model, ready)).catch(() => {})
@@ -167,7 +167,7 @@ function onThrottled() {
 
 function onBatchOk(n) {
   _okStreak += n
-  if (_okStreak >= 400) { _rate = Math.min(RATE_MAX, _rate + 2); _okStreak = 0 }
+  if (_okStreak >= 200) { _rate = Math.min(RATE_MAX, _rate + 3); _okStreak = 0 }
 }
 
 let _activeDownloads = 0
@@ -208,32 +208,62 @@ async function loadModel() {
   const textVecs = text_embeds.tolist().map(normalize)
   await textModel.dispose?.()
 
-  const processor = await T.AutoProcessor.from_pretrained(MODEL)
-  let visionModel = null, device = 'wasm'
-  // Con la tarjeta gráfica (WebGPU) es ~5 veces más rápido; necesita soporte de fp16
-  if (!_forceCpu && await hasGpuF16()) {
+  // Con la tarjeta gráfica (WebGPU) es mucho más rápido: fp16 si la tarjeta lo soporta, si no fp32
+  const gpu = _forceCpu ? null : await gpuInfo()
+  if (gpu) {
     try {
-      visionModel = await T.CLIPVisionModelWithProjection.from_pretrained(MODEL, { dtype: 'fp16', device: 'webgpu' })
-      device = 'webgpu'
+      const processor = await T.AutoProcessor.from_pretrained(MODEL)
+      const visionModel = await T.CLIPVisionModelWithProjection.from_pretrained(MODEL, { dtype: gpu.f16 ? 'fp16' : 'fp32', device: 'webgpu' })
+      _model = { T, processor, visionModel, textVecs, device: 'webgpu', batch: 32 }
+      return _model
     } catch (e) {
       logError('Tarjeta gráfica no disponible; se clasificará con el procesador', e.message)
     }
   }
-  if (!visionModel) visionModel = await T.CLIPVisionModelWithProjection.from_pretrained(MODEL, { dtype: 'q8', device: 'wasm' })
-  _model = { T, processor, visionModel, textVecs, device }
+  // Sin tarjeta gráfica: varios hilos del procesador en paralelo
+  const pool = createPool(Math.min(4, Math.max(1, Math.floor((navigator.hardwareConcurrency || 2) / 2))))
+  _model = { T, pool, textVecs, device: 'wasm', batch: 8 * pool.size }
   return _model
 }
 
-async function hasGpuF16() {
+async function gpuInfo() {
   try {
     const adapter = await navigator.gpu?.requestAdapter()
-    return !!adapter?.features.has('shader-f16')
-  } catch { return false }
+    return adapter ? { f16: adapter.features.has('shader-f16') } : null
+  } catch { return null }
+}
+
+function createPool(size) {
+  const workers = Array.from({ length: size }, () => new Worker(new URL('./clipWorker.js', import.meta.url), { type: 'module' }))
+  const waiting = new Map()
+  let seq = 0
+  workers.forEach(w => {
+    w.onmessage = ({ data }) => {
+      const p = waiting.get(data.id)
+      waiting.delete(data.id)
+      data.error ? p?.reject(new Error(data.error)) : p?.resolve(data.vecs)
+    }
+    w.onerror = e => logError('Error en un hilo de la IA', e.message)
+  })
+  return {
+    size,
+    // Reparte las imágenes entre los hilos y devuelve un vector (o null) por imagen, en el mismo orden
+    async embed(blobs) {
+      const per = Math.ceil(blobs.length / size)
+      const parts = workers.map((w, k) => {
+        const slice = blobs.slice(k * per, (k + 1) * per)
+        if (!slice.length) return Promise.resolve([])
+        const id = ++seq
+        return new Promise((resolve, reject) => { waiting.set(id, { resolve, reject }); w.postMessage({ id, blobs: slice }) })
+      })
+      return (await Promise.all(parts)).flat()
+    },
+  }
 }
 
 // Descarga las miniaturas de un lote (en paralelo) y las deja listas para el modelo.
 // Las fotos con vector ya guardado no se descargan: solo se vuelven a puntuar.
-async function prepareBatch(T, photos) {
+async function prepareBatch(photos) {
   photos.forEach(p => _attempted.add(p.id))
   const known = await getEmbeddings(photos.map(p => p.id)).catch(() => new Map())
   const fromVec = photos.filter(p => known.has(p.id)).map(photo => ({ photo, vec: known.get(photo.id) }))
@@ -252,49 +282,58 @@ async function prepareBatch(T, photos) {
     })
   }
 
-  let throttled = false
+  // Un 429 del servidor de miniaturas llega sin cabeceras CORS (el navegador solo ve un error de red),
+  // pero también fallan así algunas miniaturas sueltas (HEIC, RAW…). Solo es bloqueo si falla buena parte del lote.
+  let limited = 0, netFail = 0, tried = 0
   const items = await Promise.all(photos.map(async photo => {
     try {
       let blob = null
       if (photo.sourceType === 'local') {
         blob = await getThumbnail(photo.id)
       } else if (urls.has(photo.itemId)) {
-        let res
-        try {
-          res = await limitedFetch(urls.get(photo.itemId))
-        } catch {
-          // Un 429 del servidor de miniaturas llega sin cabeceras CORS: el navegador solo ve un error de red
-          throttled = true
-          _attempted.delete(photo.id)
-          return null
+        tried++
+        let res = null
+        for (let attempt = 0; attempt < 2 && !res; attempt++) {
+          try { res = await limitedFetch(urls.get(photo.itemId)) } catch { if (!attempt) await sleep(1500) }
         }
-        if (res.status === 429 || res.status === 503) { throttled = true; _attempted.delete(photo.id); return null }
+        if (!res) { netFail++; _attempted.delete(photo.id); return null }
+        if (res.status === 429 || res.status === 503) { limited++; _attempted.delete(photo.id); return null }
         if (!res.ok) return null   // 406/500: OneDrive no puede generar esa miniatura
         blob = await res.blob()
       }
-      return blob ? { photo, image: await T.RawImage.fromBlob(blob) } : null
+      return blob ? { photo, blob } : null
     } catch { return null }
   }))
 
-  if (throttled) {
+  if (limited || (tried && netFail >= Math.max(3, tried / 2))) {
     onThrottled()
-    noteThrottle(60, 'miniaturas')
+    noteThrottle(limited ? 60 : 20, 'miniaturas')
   } else {
     onBatchOk(photos.length)
   }
   return [...fromVec, ...items.filter(Boolean)]
 }
 
-async function classifyBatch({ processor, visionModel, textVecs }, ready) {
+async function classifyBatch({ T, processor, visionModel, pool, textVecs }, ready) {
   if (!ready.length) return []
-  const toEmbed = ready.filter(r => r.image)
+  const toEmbed = ready.filter(r => r.blob)
   if (toEmbed.length) {
-    const { image_embeds } = await visionModel(await processor(toEmbed.map(r => r.image)))
-    const vecs = image_embeds.tolist().map(normalize)
-    toEmbed.forEach((r, i) => { r.vec = Float32Array.from(vecs[i]) })
-    await saveEmbeddings(toEmbed.map(r => [r.photo.id, r.vec])).catch(() => {})
+    let vecs
+    if (pool) {
+      vecs = await pool.embed(toEmbed.map(r => r.blob))
+    } else {
+      const images = await Promise.all(toEmbed.map(r => T.RawImage.fromBlob(r.blob).catch(() => null)))
+      const ok = images.map((img, i) => img ? i : -1).filter(i => i >= 0)
+      vecs = new Array(toEmbed.length).fill(null)
+      if (ok.length) {
+        const { image_embeds } = await visionModel(await processor(ok.map(i => images[i])))
+        image_embeds.tolist().forEach((v, k) => { vecs[ok[k]] = v })
+      }
+    }
+    toEmbed.forEach((r, i) => { if (vecs[i]) r.vec = Float32Array.from(normalize(vecs[i])) })
+    await saveEmbeddings(toEmbed.filter(r => r.vec).map(r => [r.photo.id, r.vec])).catch(() => {})
   }
-  return ready.map(r => [r.photo.id, decideKind(r.vec, r.photo, textVecs)])
+  return ready.filter(r => r.vec).map(r => [r.photo.id, decideKind(r.vec, r.photo, textVecs)])
 }
 
 function decideKind(img, photo, textVecs) {
