@@ -346,7 +346,16 @@ function updateClassifyStatus() {
   const el = document.getElementById('classify-status')
   if (!el) return
   if (classifying.active) {
-    el.textContent = classifying.message || `Clasificando con IA… ${classifying.done} de ${classifying.total}`
+    if (classifying.message) { el.textContent = classifying.message; return }
+    const fmt = n => n.toLocaleString('es-MX')
+    let text = `Clasificando con IA: ${fmt(classifying.done)} de ${fmt(classifying.total)}`
+    if (classifying.perSec) {
+      const mins = Math.ceil((classifying.total - classifying.done) / classifying.perSec / 60)
+      const left = mins >= 60 ? `${Math.floor(mins / 60)} h ${mins % 60} min` : `${mins} min`
+      text += ` · ${classifying.perSec.toFixed(1)} fotos/s · faltan ~${left}`
+      text += classifying.device === 'webgpu' ? ' · tarjeta gráfica' : ' · procesador'
+    }
+    el.textContent = text
   } else {
     el.textContent = ''
   }

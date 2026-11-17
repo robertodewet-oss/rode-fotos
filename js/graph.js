@@ -89,6 +89,44 @@ export async function getThumbnailUrl(driveId, itemId, size = 'medium') {
   } catch { return null }
 }
 
+// URLs de miniatura de muchos items en peticiones $batch de 20 (el máximo de Graph). Devuelve Map itemId → url
+export async function getThumbnailUrls(items, size = 'medium') {
+  const urls = new Map()
+  for (let i = 0; i < items.length; i += 20) {
+    let chunk = items.slice(i, i + 20)
+    // Graph limita ráfagas grandes (429/503): esperar lo que pide y reintentar solo las que fallaron
+    for (let attempt = 0; attempt < 4 && chunk.length; attempt++) {
+      let data, waitSec = 0
+      try {
+        data = await g('/$batch', {
+          method: 'POST',
+          body: JSON.stringify({
+            requests: chunk.map((it, k) => ({ id: String(k), method: 'GET', url: `/drives/${it.driveId}/items/${it.itemId}/thumbnails/0/${size}` })),
+          }),
+        })
+      } catch (e) {
+        if (!/Graph (429|503)/.test(e.message)) throw e
+        await sleep(10000 * (attempt + 1))
+        continue
+      }
+      const retry = []
+      for (const r of data?.responses || []) {
+        const it = chunk[Number(r.id)]
+        if (r.status === 200 && r.body?.url) urls.set(it.itemId, r.body.url)
+        else if (r.status === 429 || r.status === 503) {
+          retry.push(it)
+          waitSec = Math.max(waitSec, Number(r.headers?.['Retry-After']) || 5)
+        }
+      }
+      chunk = retry
+      if (chunk.length) await sleep(waitSec * 1000)
+    }
+  }
+  return urls
+}
+
+function sleep(ms) { return new Promise(r => setTimeout(r, ms)) }
+
 // Descarga el contenido de un archivo del approot
 export async function readAppFile(filename) {
   try {

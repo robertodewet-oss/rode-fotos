@@ -1,8 +1,8 @@
 import { getState, setState, applyFilters, SCREENSHOT_NAME } from './store.js'
 import { savePhotos, getThumbnail } from './db.js'
-import { getThumbnailUrl } from './graph.js'
+import { getThumbnailUrls } from './graph.js'
 import { getAccount } from './auth.js'
-import { scheduleSave } from './sync.js'
+import { saveToCloud } from './sync.js'
 
 // Subir este número re-clasifica todas las fotos (p. ej. al cambiar las frases)
 export const KIND_VERSION = 1
@@ -47,33 +47,60 @@ export function canClassifyHere() {
   return window.matchMedia('(pointer: fine)').matches && window.innerWidth >= 768
 }
 
+const BATCH = 16             // fotos por pasada del modelo
+const PREFETCH = 3           // lotes descargándose mientras se analiza el actual
+const UI_EVERY_MS = 1000     // con miles de fotos, refrescar la vista por cada foto es lo que más tarda
+const FILTER_EVERY_MS = 15000
+const CLOUD_EVERY_MS = 5 * 60000  // el índice pesa varios MB: subirlo de vez en cuando, no por lote
+
 let _running = false
 let _model = null
+let _forceCpu = false
 
 export async function startClassification() {
   if (_running || !canClassifyHere() || !getAccount()) return
   _running = true
+  let lastUi = 0, lastFilter = Date.now(), lastCloud = Date.now()
   try {
     let pending = getPending()
     while (pending.length) {
       setStatus({ active: true, done: 0, total: pending.length, message: 'Preparando modelo de IA…' })
-      const model = await loadModel()
-      let results = []
-      for (let i = 0; i < pending.length; i++) {
-        const photo = pending[i]
-        _attempted.add(photo.id)
-        setStatus({ active: true, done: i, total: pending.length, message: '' })
+      let model = await loadModel()
+      const t0 = Date.now()
+      const chunks = []
+      for (let i = 0; i < pending.length; i += BATCH) chunks.push(pending.slice(i, i + BATCH))
+
+      const inflight = chunks.slice(0, PREFETCH).map(c => prepareBatch(model.T, c))
+      let done = 0
+      for (let b = 0; b < chunks.length; b++) {
+        const ready = await inflight.shift()
+        if (b + PREFETCH < chunks.length) inflight.push(prepareBatch(model.T, chunks[b + PREFETCH]))
+
         try {
-          const kind = await classifyPhoto(model, photo)
-          if (kind) results.push([photo.id, kind])
+          await saveResults(await classifyBatch(model, ready))
         } catch (e) {
-          console.warn('[classify]', photo.name, e.message)
+          console.warn('[classify] lote', e.message)
+          if (model.device === 'webgpu') {
+            // La tarjeta gráfica puede perderse (driver, suspensión): seguir con el procesador
+            _forceCpu = true
+            _model = null
+            model = await loadModel()
+            await saveResults(await classifyBatch(model, ready)).catch(() => {})
+          }
         }
-        if (results.length >= 20 || i === pending.length - 1) {
-          await saveResults(results)
-          results = []
+        done += chunks[b].length
+
+        const now = Date.now()
+        if (now - lastFilter > FILTER_EVERY_MS) { applyFilters(); lastFilter = now }
+        if (now - lastCloud > CLOUD_EVERY_MS) { saveToCloud(); lastCloud = now }
+        if (now - lastUi > UI_EVERY_MS) {
+          const perSec = done / ((now - t0) / 1000)
+          setStatus({ active: true, done, total: pending.length, message: '', perSec, device: model.device })
+          lastUi = now
         }
       }
+      applyFilters()
+      saveToCloud()
       pending = getPending()
     }
   } catch (e) {
@@ -87,11 +114,13 @@ export async function startClassification() {
 // Ya intentadas en esta sesión; las que fallaron (sin miniatura, sin red…) se reintentan al volver a abrir la app
 const _attempted = new Set()
 
+// Las más recientes primero: son las que más se consultan
 function getPending() {
   const here = new Set(getState().sources.map(s => s.id))
   return getState().photos.filter(p =>
     p.mediaType !== 'video' && !SCREENSHOT_NAME.test(p.name || '') && (p.kindV || 0) < KIND_VERSION &&
     !_attempted.has(p.id) && (p.sourceType !== 'local' || here.has(p.sourceId)))
+    .sort((a, b) => (b.takenAt || 0) - (a.takenAt || 0))
 }
 
 // Aplica sobre la versión actual de cada foto: el estado puede haberse recargado desde la nube mientras tanto
@@ -104,8 +133,6 @@ async function saveResults(results) {
     if (p) updated.push(Object.assign(p, { kind, kindV: KIND_VERSION }))
   }
   if (updated.length) await savePhotos(updated)
-  applyFilters()
-  scheduleSave()
 }
 
 function setStatus(classifying) {
@@ -122,42 +149,60 @@ async function loadModel() {
   await textModel.dispose?.()
 
   const processor = await T.AutoProcessor.from_pretrained(MODEL)
-  const visionModel = await T.CLIPVisionModelWithProjection.from_pretrained(MODEL, { dtype: 'q8', device: 'wasm' })
-  _model = { T, processor, visionModel, textVecs }
+  let visionModel = null, device = 'wasm'
+  // Con la tarjeta gráfica (WebGPU) es ~5 veces más rápido; necesita soporte de fp16
+  if (!_forceCpu && await hasGpuF16()) {
+    try {
+      visionModel = await T.CLIPVisionModelWithProjection.from_pretrained(MODEL, { dtype: 'fp16', device: 'webgpu' })
+      device = 'webgpu'
+    } catch (e) {
+      console.warn('[classify] WebGPU no disponible, usando CPU:', e.message)
+    }
+  }
+  if (!visionModel) visionModel = await T.CLIPVisionModelWithProjection.from_pretrained(MODEL, { dtype: 'q8', device: 'wasm' })
+  _model = { T, processor, visionModel, textVecs, device }
   return _model
 }
 
-async function classifyPhoto({ T, processor, visionModel, textVecs }, photo) {
-  const url = await imageUrlFor(photo)
-  if (!url) return null
-  let image
+async function hasGpuF16() {
   try {
-    image = await T.RawImage.fromURL(url)
-  } finally {
-    if (url.startsWith('blob:')) URL.revokeObjectURL(url)
-  }
-  const { image_embeds } = await visionModel(await processor(image))
-  const img = normalize(image_embeds.tolist()[0])
-
-  const ranked = textVecs
-    .map((t, i) => ({ kind: PROMPTS[i][0], score: dot(img, t) }))
-    .sort((a, b) => b.score - a.score)
-
-  // Si la foto trae datos de cámara no puede ser captura ni gráfico
-  const hasCamera = !!(photo.cameraMake || photo.cameraModel)
-  const best = ranked.find(r => !(hasCamera && (r.kind === 'captura' || r.kind === 'grafico')))
-  return best.kind
+    const adapter = await navigator.gpu?.requestAdapter()
+    return !!adapter?.features.has('shader-f16')
+  } catch { return false }
 }
 
-async function imageUrlFor(photo) {
-  if (photo.sourceType === 'local') {
-    const blob = await getThumbnail(photo.id).catch(() => null)
-    return blob ? URL.createObjectURL(blob) : null
-  }
-  if (photo.sourceType === 'onedrive') {
-    return getThumbnailUrl(photo.driveId, photo.itemId, 'medium')
-  }
-  return null
+// Descarga las miniaturas de un lote (en paralelo) y las deja listas para el modelo
+async function prepareBatch(T, photos) {
+  photos.forEach(p => _attempted.add(p.id))
+  const od = photos.filter(p => p.sourceType === 'onedrive')
+  let urls = new Map()
+  if (od.length) urls = await getThumbnailUrls(od, 'medium').catch(e => { console.warn('[classify] miniaturas', e.message); return new Map() })
+
+  const items = await Promise.all(photos.map(async photo => {
+    try {
+      const blob = photo.sourceType === 'local'
+        ? await getThumbnail(photo.id)
+        : urls.has(photo.itemId) ? await (await fetch(urls.get(photo.itemId))).blob() : null
+      return blob ? { photo, image: await T.RawImage.fromBlob(blob) } : null
+    } catch { return null }
+  }))
+  return items.filter(Boolean)
+}
+
+async function classifyBatch({ processor, visionModel, textVecs }, ready) {
+  if (!ready.length) return []
+  const { image_embeds } = await visionModel(await processor(ready.map(r => r.image)))
+  return image_embeds.tolist().map((emb, i) => {
+    const img = normalize(emb)
+    const ranked = textVecs
+      .map((t, k) => ({ kind: PROMPTS[k][0], score: dot(img, t) }))
+      .sort((a, b) => b.score - a.score)
+    // Si la foto trae datos de cámara no puede ser captura ni gráfico
+    const photo = ready[i].photo
+    const hasCamera = !!(photo.cameraMake || photo.cameraModel)
+    const best = ranked.find(r => !(hasCamera && (r.kind === 'captura' || r.kind === 'grafico')))
+    return [photo.id, best.kind]
+  })
 }
 
 function normalize(v) {
