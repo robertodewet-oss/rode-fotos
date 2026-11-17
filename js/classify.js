@@ -1,6 +1,6 @@
 import { getState, setState, applyFilters, SCREENSHOT_NAME, isVideo } from './store.js'
 import { savePhotos, getThumbnail, getEmbeddings, saveEmbeddings } from './db.js'
-import { getThumbnailUrls, waitIfThrottled, noteThrottle } from './graph.js'
+import { getThumbnailUrls, waitIfThrottled, noteThrottle, throttledUntil } from './graph.js'
 import { logError } from './ui.js'
 import { getAccount } from './auth.js'
 import { saveToCloud } from './sync.js'
@@ -66,9 +66,12 @@ const FILTER_EVERY_MS = 15000
 const CLOUD_EVERY_MS = 5 * 60000  // el índice pesa varios MB: subirlo de vez en cuando, no por lote
 
 // Ritmo adaptable: OneDrive bloquea por un rato si se le piden demasiadas miniaturas seguidas
-const RATE_MIN = 3, RATE_START = 12, RATE_MAX = 40
-let _rate = RATE_START
-let _okStreak = 0
+// Se recuerda el ritmo en que OneDrive empezó a bloquear: después se trabaja un poco por debajo de él,
+// porque cada bloqueo cuesta 1–2 minutos de espera.
+const RATE_MIN = 3, RATE_MAX = 40
+let _ceiling = Number(localStorage.getItem('rode-fotos-ritmo')) || RATE_MAX
+let _rate = Math.min(12, _ceiling)
+let _okStreak = 0, _probeStreak = 0
 let _nextStartAt = 0
 
 let _running = false
@@ -161,13 +164,17 @@ async function pace(n) {
 }
 
 function onThrottled() {
+  _ceiling = Math.max(RATE_MIN, _rate * 0.8)
+  try { localStorage.setItem('rode-fotos-ritmo', _ceiling.toFixed(1)) } catch {}
   _rate = Math.max(RATE_MIN, _rate / 2)
-  _okStreak = 0
+  _okStreak = 0; _probeStreak = 0
 }
 
 function onBatchOk(n) {
-  _okStreak += n
-  if (_okStreak >= 200) { _rate = Math.min(RATE_MAX, _rate + 3); _okStreak = 0 }
+  _okStreak += n; _probeStreak += n
+  if (_okStreak >= 200) { _rate = Math.min(_ceiling, _rate + 2); _okStreak = 0 }
+  // Sin bloqueos por un buen rato: probar con un poco más
+  if (_probeStreak >= 3000) { _ceiling = Math.min(RATE_MAX, _ceiling + 1); _probeStreak = 0 }
 }
 
 let _activeDownloads = 0
@@ -275,6 +282,7 @@ async function prepareBatch(photos) {
 
   const od = photos.filter(p => p.sourceType === 'onedrive')
   let urls = new Map()
+  const blockedBefore = throttledUntil()
   if (od.length) {
     urls = await getThumbnailUrls(od, 'medium').catch(e => {
       logError('No se pudieron pedir miniaturas a OneDrive', e.message)
@@ -305,9 +313,10 @@ async function prepareBatch(photos) {
     } catch { return null }
   }))
 
-  if (limited || (tried && netFail >= Math.max(3, tried / 2))) {
+  // También cuenta si Graph pidió esperar al pedir las direcciones de las miniaturas
+  if (limited || (tried && netFail >= Math.max(3, tried / 2)) || throttledUntil() > blockedBefore) {
     onThrottled()
-    noteThrottle(limited ? 60 : 20, 'miniaturas')
+    if (limited || netFail) noteThrottle(limited ? 60 : 20, 'miniaturas')
   } else {
     onBatchOk(photos.length)
   }
