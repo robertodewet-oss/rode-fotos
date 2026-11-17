@@ -46,7 +46,7 @@ export async function saveToCloud() {
     ])
     // Guardar sin los fileHandles (no serializables en JSON)
     const cleanPhotos = photos.map(p => {
-      const { fileHandle, ...rest } = p
+      const { fileHandle, thumbnailUrl, ...rest } = p
       return rest
     })
     await Promise.all([

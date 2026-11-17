@@ -9,6 +9,8 @@ const THUMB_H = 147
 const THUMB_GAP = 8
 const INFO_H = 36
 
+const _thumbUrls = new Map()
+
 class VirtualGallery {
   constructor(wrap) {
     this.wrap = wrap
@@ -122,17 +124,13 @@ class VirtualGallery {
         if (blob) url = URL.createObjectURL(blob)
       } catch {}
     } else if (photo.sourceType === 'onedrive') {
-      // Intentar con la URL cacheada o pedir una nueva
-      if (photo.thumbnailUrl) {
-        url = photo.thumbnailUrl
-      } else if (getAccount()) {
+      // Solo en memoria: las URLs de Graph caducan y no deben guardarse con la foto
+      url = _thumbUrls.get(photo.id) || null
+      if (!url && getAccount()) {
         try {
           url = await getThumbnailUrl(photo.driveId, photo.itemId, 'c480x480')
             || await getThumbnailUrl(photo.driveId, photo.itemId, 'large')
-          if (url) {
-            // Cachear la URL en el objeto (no persistir para no sobrecargar IDB)
-            photo.thumbnailUrl = url
-          }
+          if (url) _thumbUrls.set(photo.id, url)
         } catch {}
       }
     }
