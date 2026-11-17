@@ -325,7 +325,8 @@ function syncCheckboxes() {
   document.querySelectorAll('input[data-kind]').forEach(i => { i.checked = !hiddenKinds.includes(i.dataset.kind) })
   document.querySelectorAll('input[data-device]').forEach(i => { i.checked = !hiddenDevices.includes(i.dataset.device) })
   const summary = document.querySelector('#f-devices summary')
-  if (summary) summary.textContent = hiddenDevices.length ? `Dispositivos (${hiddenDevices.length} ocultos)` : 'Dispositivos'
+  const n = hiddenDevices.length
+  if (summary) summary.textContent = n ? `Dispositivos (${n} oculto${n === 1 ? '' : 's'})` : 'Dispositivos'
 }
 
 function updateClassifyStatus() {

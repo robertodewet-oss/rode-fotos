@@ -751,6 +751,17 @@ input, select, textarea { font: inherit; }
   .sidebar-section, .sidebar-divider, #sidebar-bottom, .sidebar-filters { display: none; }
   .only-mobile { display: block; }
   .hide-mobile { display: none; }
+  #topbar { height: auto; flex-wrap: wrap; row-gap: 0; padding: 8px 12px 0; }
+  #filter-bar {
+    order: 3;
+    width: 100%;
+    flex-wrap: nowrap;
+    overflow-x: auto;
+    padding: 6px 0 8px;
+    border-bottom: none;
+  }
+  #filter-bar > * { flex-shrink: 0; }
+  .user-name { display: none; }
   .dd-panel { position: fixed; left: 12px; right: 12px; top: auto; min-width: 0; }
   .nav-item {
     flex: 1;
