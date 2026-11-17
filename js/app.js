@@ -320,6 +320,9 @@ function renderApp() {
   // Durante una pausa por límites de OneDrive no hay cambios de estado: refrescar la cuenta regresiva
   setInterval(() => { if (getState().classifying.active) updateClassifyStatus() }, 2000)
 
+  // El shell es nuevo (p. ej. tras cerrar y abrir sesión): forzar que la vista se dibuje de cero
+  _currentView = null
+  _mapInitialized = false
   navigate(location.hash.slice(1) || 'gallery')
 
   // Dar tiempo a que cargue la galería antes de empezar a descargar el modelo
