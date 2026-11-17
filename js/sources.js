@@ -103,6 +103,15 @@ function renderSourceCards(grid) {
   })
 }
 
+function statusLabel(status) {
+  return {
+    ok: 'Sincronizada',
+    indexing: 'Indexando…',
+    pending: 'Pendiente',
+    error: 'Error al sincronizar (ver registro abajo)',
+  }[status] || 'Sincronizada'
+}
+
 // ── Conectar OneDrive ──────────────────────────────────────────────────────
 
 export async function connectOneDrive() {
