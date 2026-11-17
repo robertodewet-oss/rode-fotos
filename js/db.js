@@ -104,8 +104,23 @@ export async function getEmbeddings(photoIds) {
   return new Map(rows.filter(Boolean).map(r => [r.photoId, r.vec]))
 }
 
+// Sube cada vez que se guardan vectores nuevos: el buscador sabe cuándo volver a leerlos
+export let embeddingsVersion = 0
+
 export async function saveEmbeddings(entries) {
+  embeddingsVersion++
   return putAll('embeddings', entries.map(([photoId, vec]) => ({ photoId, vec })))
+}
+
+// Todos los vectores en una sola matriz (ids[i] ↔ fila i): para buscar entre decenas de miles de fotos
+export async function getAllEmbeddings() {
+  await openDB()
+  const all = await promisify(tx('embeddings').getAll())
+  const ids = all.map(r => r.photoId), rows = all.map(r => r.vec)
+  const dim = rows[0]?.length || 512
+  const matrix = new Float32Array(rows.length * dim)
+  rows.forEach((v, i) => matrix.set(v, i * dim))
+  return { ids, matrix, dim }
 }
 
 export async function getAllByIndex(storeName, indexName, value) {

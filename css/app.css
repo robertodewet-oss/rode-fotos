@@ -213,6 +213,21 @@ input, select, textarea { font: inherit; }
 }
 .filter-date:focus { border-color: var(--primary); }
 
+.filter-search { display: flex; flex: 0 1 240px; min-width: 150px; margin: 0; }
+.filter-search input {
+  width: 100%;
+  padding: 5px 10px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  font-size: 13px;
+  outline: none;
+  color: var(--text);
+  background: var(--surface, #fff);
+}
+.filter-search input:focus { border-color: var(--primary); }
+.filter-search input.busy { background-image: linear-gradient(90deg, transparent, rgba(79,70,229,.15), transparent); background-size: 200% 100%; animation: search-busy 1.2s linear infinite; }
+@keyframes search-busy { from { background-position: 200% 0; } to { background-position: -200% 0; } }
+
 #filter-tags-wrap { display: flex; align-items: center; gap: 4px; flex-wrap: wrap; }
 .tag-chip {
   display: inline-flex; align-items: center; gap: 4px;

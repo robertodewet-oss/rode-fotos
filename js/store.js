@@ -8,6 +8,7 @@ export function emptyFilters() {
     hiddenKinds: [],       // kindOf() de los tipos desmarcados
     tags: [],              // string[]
     sort: 'taken-desc',    // clave de SORTS
+    search: '',            // texto del buscador
   }
 }
 
@@ -74,6 +75,7 @@ const _state = {
   lastSelectedId: null,    // para shift+click rango
   view: 'gallery',         // 'gallery' | 'map' | 'projects' | 'sources'
   filters: emptyFilters(),
+  searchScores: null,      // Map photoId → puntaje mientras hay una búsqueda activa
   classifying: { active: false, done: 0, total: 0, message: '' },
   indexing: {
     active: false,
@@ -126,6 +128,14 @@ export function applyFilters() {
   }
   if (filters.tags.length > 0) {
     list = list.filter(p => filters.tags.every(t => p.tags?.includes(t)))
+  }
+
+  // Con búsqueda activa: solo las coincidencias, la más parecida primero
+  const scores = _state.searchScores
+  if (scores) {
+    list = list.filter(p => scores.has(p.id)).sort((a, b) => scores.get(b.id) - scores.get(a.id))
+    setState({ filtered: list })
+    return
   }
 
   // Las fotos sin el dato van al final en ambas direcciones

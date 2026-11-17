@@ -2,6 +2,7 @@ import { initAuth, signIn, signOut, getAccount } from './auth.js'
 import { openDB, getPhotos, getProjects, getTags, getSources } from './db.js'
 import { getState, setState, applyFilters, clearSelection, subscribe, emptyFilters, kindOf, deviceOf, SORTS } from './store.js'
 import { startClassification } from './classify.js'
+import { searchPhotos, searchReady } from './search.js'
 import { syncFromCloud, reloadState } from './sync.js'
 import { initGallery, updateGallery, rebuildGalleryCards } from './gallery.js'
 import { initViewer } from './viewer.js'
@@ -118,6 +119,10 @@ function renderApp() {
         RODE Fotos
       </div>
       <div id="filter-bar">
+        <form id="f-search-form" class="filter-search" role="search">
+          <input type="search" id="f-search" placeholder="🔍 Buscar: alberca café…" autocomplete="off"
+            title="Describe lo que buscas; la IA compara la frase con cada foto ya clasificada en esta PC">
+        </form>
         <select id="f-project" class="filter-select">
           <option value="">Todos los proyectos</option>
         </select>
@@ -241,6 +246,36 @@ function renderApp() {
     setState({ filters: { ...getState().filters, dateTo: val } })
     applyFilters(); updateActiveView()
   })
+  const searchInput = document.getElementById('f-search')
+  let searchSeq = 0
+  const runSearch = async () => {
+    const query = searchInput.value.trim()
+    const seq = ++searchSeq
+    if (!query) {
+      setState({ searchScores: null, filters: { ...getState().filters, search: '' } })
+      applyFilters(); updateActiveView()
+      return
+    }
+    searchInput.classList.add('busy')
+    if (!searchReady()) notify('Preparando el buscador… la primera vez descarga la IA (~1 min)')
+    try {
+      const { scores, english, empty } = await searchPhotos(query)
+      if (seq !== searchSeq) return
+      if (empty) { notify('Aún no hay fotos analizadas en este dispositivo. El buscador funciona en la PC que clasifica las fotos.'); return }
+      searchInput.title = `Buscando: "${english}"`
+      setState({ searchScores: scores, filters: { ...getState().filters, search: query } })
+      applyFilters(); updateActiveView()
+      document.getElementById('gallery-wrap')?.scrollTo({ top: 0 })
+    } catch (e) {
+      notify('No se pudo buscar: ' + e.message, 'error')
+    } finally {
+      if (seq === searchSeq) searchInput.classList.remove('busy')
+    }
+  }
+  document.getElementById('f-search-form').addEventListener('submit', e => { e.preventDefault(); runSearch() })
+  // La "x" del cuadro de búsqueda lo vacía: quitar la búsqueda
+  searchInput.addEventListener('search', () => { if (!searchInput.value) runSearch() })
+
   const sortSel = document.getElementById('f-sort')
   sortSel.value = getState().filters.sort
   sortSel.addEventListener('change', e => {
@@ -298,7 +333,8 @@ function renderApp() {
 
   document.getElementById('btn-clear-filters').addEventListener('click', () => {
     // "Limpiar" quita filtros pero respeta el orden elegido
-    setState({ filters: { ...emptyFilters(), sort: getState().filters.sort } })
+    setState({ filters: { ...emptyFilters(), sort: getState().filters.sort }, searchScores: null })
+    document.getElementById('f-search').value = ''
     document.getElementById('f-project').value = ''
     document.getElementById('f-date-from').value = ''
     document.getElementById('f-date-to').value = ''
