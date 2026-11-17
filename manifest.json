@@ -1,0 +1,24 @@
+{
+  "name": "RODE Fotos",
+  "short_name": "RODE Fotos",
+  "description": "Explorador de fotos de obra – RODE HAUS",
+  "start_url": "./",
+  "display": "standalone",
+  "background_color": "#1e293b",
+  "theme_color": "#4f46e5",
+  "lang": "es",
+  "icons": [
+    {
+      "src": "icon-192.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any maskable"
+    },
+    {
+      "src": "icon-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any maskable"
+    }
+  ]
+}

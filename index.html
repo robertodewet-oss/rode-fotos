@@ -1,0 +1,82 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0">
+  <meta name="description" content="Explorador de fotos de obra – RODE HAUS">
+  <meta name="theme-color" content="#4f46e5">
+  <meta name="mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="default">
+  <meta name="apple-mobile-web-app-title" content="RODE Fotos">
+  <title>RODE Fotos</title>
+
+  <!-- PWA -->
+  <link rel="manifest" href="manifest.json">
+  <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='%234f46e5'%3E%3Cpath d='M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z'/%3E%3Ccircle cx='12' cy='13' r='4' fill='white'/%3E%3C/svg%3E">
+
+  <!-- Leaflet CSS -->
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/leaflet@1.9.4/dist/leaflet.min.css">
+
+  <!-- App CSS -->
+  <link rel="stylesheet" href="css/app.css">
+</head>
+<body>
+
+<!-- Pantalla de carga inicial -->
+<div id="app-loading" style="
+  position:fixed;inset:0;background:#1e293b;
+  display:flex;flex-direction:column;align-items:center;justify-content:center;gap:16px;
+  color:white;font-family:system-ui,sans-serif;z-index:9999">
+  <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="#4f46e5" stroke-width="2">
+    <path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z"/>
+    <circle cx="12" cy="13" r="4"/>
+  </svg>
+  <div style="font-size:22px;font-weight:700;color:#e2e8f0">RODE Fotos</div>
+  <div style="width:40px;height:4px;background:#334155;border-radius:2px;overflow:hidden">
+    <div style="height:100%;background:#4f46e5;animation:load 1.2s ease infinite" id="load-bar"></div>
+  </div>
+  <style>@keyframes load{0%{width:0;margin-left:0}50%{width:70%;margin-left:0}100%{width:0;margin-left:100%}}</style>
+</div>
+
+<!-- Visor de fotos (lightbox) -->
+<div id="viewer-overlay" class="hidden">
+  <div id="viewer-img-wrap">
+    <img id="viewer-img" alt="" style="transition:opacity .2s">
+    <button id="viewer-nav-prev" title="Anterior">‹</button>
+    <button id="viewer-nav-next" title="Siguiente">›</button>
+  </div>
+  <div id="viewer-info"></div>
+  <button id="viewer-close" title="Cerrar (Esc)">✕</button>
+</div>
+
+<!-- Notificaciones toast -->
+<div id="notifications"></div>
+
+<!-- Shell principal de la app (se inyecta aquí) -->
+<div id="app-shell" style="display:flex;flex-direction:column;height:100vh"></div>
+
+<!-- MSAL.js (Microsoft Authentication Library v2) -->
+<script src="https://alcdn.msauth.net/browser/2.38.3/js/msal-browser.min.js" crossorigin="anonymous"></script>
+
+<!-- Leaflet.js -->
+<script src="https://cdn.jsdelivr.net/npm/leaflet@1.9.4/dist/leaflet.min.js" crossorigin="anonymous"></script>
+
+<!-- App principal (ES module) -->
+<script type="module">
+  import './js/app.js'
+  // Ocultar pantalla de carga cuando el módulo cargue
+  window.addEventListener('DOMContentLoaded', () => {
+    setTimeout(() => {
+      const loading = document.getElementById('app-loading')
+      if (loading) { loading.style.opacity = '0'; loading.style.transition = 'opacity .3s'; setTimeout(() => loading.remove(), 300) }
+    }, 500)
+  })
+  // Registrar Service Worker
+  if ('serviceWorker' in navigator) {
+    navigator.serviceWorker.register('./sw.js').catch(() => {})
+  }
+</script>
+
+</body>
+</html>
