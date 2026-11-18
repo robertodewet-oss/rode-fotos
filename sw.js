@@ -1,4 +1,4 @@
-const CACHE = 'rode-fotos-v22'
+const CACHE = 'rode-fotos-v23'
 const PRECACHE = [
   './',
   './index.html',
@@ -45,8 +45,11 @@ self.addEventListener('fetch', e => {
   const url = new URL(e.request.url)
   if (url.origin !== self.location.origin && url.hostname !== 'cdn.jsdelivr.net') return
 
+  // Archivos propios: preguntar siempre al servidor si cambiaron (si no, responde 304 sin descargar);
+  // sin esto el navegador reusa su copia hasta 10 min y tras una actualización mezcla versiones
+  const fresh = url.origin === self.location.origin ? fetch(e.request, { cache: 'no-cache' }) : fetch(e.request)
   e.respondWith(
-    fetch(e.request)
+    fresh
       .then(res => {
         if (res.ok) {
           const clone = res.clone()
