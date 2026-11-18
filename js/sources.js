@@ -4,6 +4,7 @@ import { getSources, saveSource, deleteSource, savePhotos, deletePhotosBySource,
 import { getState, setState, autoAssignProject, applyFilters, bestDate } from './store.js'
 import { scheduleSave } from './sync.js'
 import { notify, escHtml, getErrorLog, clearErrorLog } from './ui.js'
+import { getDiagnostics, clearDiagnostics } from './classify.js'
 
 // ── Colores disponibles para proyectos/fuentes ─────────────────────────────
 export const SOURCE_COLORS = ['#4f46e5', '#0ea5e9', '#10b981', '#f59e0b', '#ef4444', '#8b5cf6', '#ec4899', '#14b8a6']
@@ -24,9 +25,23 @@ export function renderSourcesView(container) {
         </div>
         <div id="error-log-list"></div>
       </div>
+      <div class="error-log">
+        <div class="error-log-header">
+          <h2>Diagnóstico de la IA <small>(por minuto, este dispositivo)</small></h2>
+          <button class="btn btn--secondary btn--sm" id="diag-copy">📋 Copiar</button>
+          <button class="btn btn--sm" id="diag-clear" style="color:var(--text-sm)">Borrar</button>
+        </div>
+        <div id="diag-list"></div>
+      </div>
     </div>`
   renderSourceCards(container.querySelector('#sources-grid'))
   renderErrorLog()
+  renderDiagnostics()
+  container.querySelector('#diag-copy').addEventListener('click', async () => {
+    try { await navigator.clipboard.writeText(diagText() || 'Sin datos'); notify('Diagnóstico copiado', 'success') }
+    catch { notify('No se pudo copiar', 'error') }
+  })
+  container.querySelector('#diag-clear').addEventListener('click', clearDiagnostics)
 
   container.querySelector('#log-copy').addEventListener('click', async () => {
     const text = getErrorLog().map(e => `${new Date(e.at).toLocaleString('es-MX')}  ${e.message}${e.detail ? ' — ' + e.detail : ''}`).join('\n')
@@ -52,6 +67,41 @@ function renderErrorLog() {
 }
 
 document.addEventListener('rode:errorlog', renderErrorLog)
+document.addEventListener('rode:diag', renderDiagnostics)
+
+// Una fila por minuto: cuántas fotos salieron y en qué se fue el tiempo
+const DIAG_COLS = [
+  ['Hora', d => new Date(d.at).toLocaleTimeString('es-MX', { hour: '2-digit', minute: '2-digit' })],
+  ['Fotos', d => d.fotos, 'Fotos clasificadas en ese minuto'],
+  ['Fotos/s', d => (d.fotos / ((d.duracionMs || 60000) / 1000)).toFixed(1), 'Velocidad real en ese minuto'],
+  ['Ritmo / techo', d => `${d.ritmo} / ${d.techo}`, 'Fotos/s que la app se permite pedir / máximo aprendido'],
+  ['Espera bloqueo', d => secs(d.esperaBloqueoMs / Math.max(1, d.lotes)), 'Promedio por lote esperando a que OneDrive levante un bloqueo'],
+  ['Espera ritmo', d => secs(d.esperaRitmoMs / Math.max(1, d.lotes)), 'Promedio por lote esperando para no pasar del ritmo'],
+  ['Graph', d => d.graphLlamadas ? `${d.graphLlamadas} · ${secs(d.graphMs / d.graphLlamadas)}` : '—', 'Peticiones de direcciones de miniaturas · tiempo promedio'],
+  ['Sin dirección', d => d.sinUrl, 'Fotos a las que OneDrive no les dio dirección de miniatura'],
+  ['Bloq. Graph', d => d.bloqueosGraph, 'Lotes en que Graph pidió esperar'],
+  ['Descargas', d => d.descOk ? `${d.descOk} · ${secs(d.descMs / d.descOk)}` : '0', 'Miniaturas descargadas · tiempo promedio'],
+  ['429', d => d.desc429, 'Miniaturas rechazadas por exceso de peticiones'],
+  ['Error red', d => d.descRed, 'Miniaturas que fallaron sin respuesta (a veces es un bloqueo)'],
+  ['No disp.', d => d.descNoDisp, 'Miniaturas que OneDrive no pudo generar'],
+  ['IA', d => secs(d.iaMs), 'Tiempo total de la IA en ese minuto'],
+]
+function secs(ms) { return (ms / 1000).toFixed(1) + ' s' }
+
+function diagText() {
+  const rows = getDiagnostics()
+  return [DIAG_COLS.map(c => c[0]).join('\t'), ...rows.map(d => DIAG_COLS.map(c => c[1](d)).join('\t'))].join('\n')
+}
+
+function renderDiagnostics() {
+  const el = document.getElementById('diag-list')
+  if (!el) return
+  const rows = getDiagnostics().slice().reverse()
+  el.innerHTML = rows.length
+    ? `<table class="diag-table"><thead><tr>${DIAG_COLS.map(c => `<th title="${c[2] || ''}">${c[0]}</th>`).join('')}</tr></thead>
+       <tbody>${rows.map(d => `<tr>${DIAG_COLS.map(c => `<td>${escHtml(String(c[1](d)))}</td>`).join('')}</tr>`).join('')}</tbody></table>`
+    : '<div class="error-log-empty">Aún sin datos: aparecen mientras la IA clasifica</div>'
+}
 
 function renderSourceCards(grid) {
   const { sources } = getState()

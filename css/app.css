@@ -456,6 +456,11 @@ input, select, textarea { font: inherit; }
 .error-log-msg { overflow-wrap: anywhere; }
 .error-log-msg small { color: var(--text-sm); }
 .error-log-empty { color: var(--text-sm); padding: 6px 0; }
+#diag-list { max-height: 360px; overflow: auto; }
+.diag-table { border-collapse: collapse; font-size: 12px; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.diag-table th { position: sticky; top: 0; background: var(--surface, #fff); text-align: right; font-weight: 600; color: var(--text-sm); padding: 4px 8px; cursor: help; }
+.diag-table td { text-align: right; padding: 4px 8px; border-top: 1px solid var(--border); }
+.diag-table th:first-child, .diag-table td:first-child { text-align: left; }
 
 .source-card {
   background: var(--bg-card);

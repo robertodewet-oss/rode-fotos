@@ -76,6 +76,36 @@ let _rate = Math.min(12, _ceiling)
 let _okStreak = 0, _probeStreak = 0, _lastThrottle = 0
 let _nextStartAt = 0
 
+// ── Diagnóstico minuto a minuto (se ve en Fuentes) ─────────────────────────
+const DIAG_KEY = 'rode-fotos-diagnostico'
+function newMinute() {
+  return { at: Date.now(), fotos: 0, deVector: 0, lotes: 0, esperaBloqueoMs: 0, esperaRitmoMs: 0,
+    graphLlamadas: 0, graphMs: 0, graphPedidas: 0, sinUrl: 0, bloqueosGraph: 0,
+    descOk: 0, descMs: 0, desc429: 0, descRed: 0, descNoDisp: 0, iaMs: 0, ritmo: 0, techo: 0 }
+}
+let _diag = newMinute()
+function flushDiag(force = false) {
+  if (!force && Date.now() - _diag.at < 60000) return
+  _diag.ritmo = +_rate.toFixed(1); _diag.techo = +_ceiling.toFixed(1)
+  _diag.duracionMs = Date.now() - _diag.at
+  if (_diag.lotes || _diag.fotos) {
+    try {
+      const log = JSON.parse(localStorage.getItem(DIAG_KEY) || '[]')
+      log.push(_diag)
+      localStorage.setItem(DIAG_KEY, JSON.stringify(log.slice(-180)))
+      document.dispatchEvent(new Event('rode:diag'))
+    } catch {}
+  }
+  _diag = newMinute()
+}
+export function getDiagnostics() {
+  try { return JSON.parse(localStorage.getItem(DIAG_KEY) || '[]') } catch { return [] }
+}
+export function clearDiagnostics() {
+  try { localStorage.removeItem(DIAG_KEY) } catch {}
+  document.dispatchEvent(new Event('rode:diag'))
+}
+
 let _running = false
 let _model = null
 let _forceCpu = false
@@ -115,6 +145,7 @@ export async function startClassification() {
         }
         done += chunks[b].length
 
+        flushDiag()
         const now = Date.now()
         if (now - lastFilter > FILTER_EVERY_MS) { applyFilters(); lastFilter = now }
         if (now - lastCloud > CLOUD_EVERY_MS) { saveToCloud(); lastCloud = now }
@@ -136,6 +167,7 @@ export async function startClassification() {
   } catch (e) {
     logError('La clasificación se detuvo', e.message)
   } finally {
+    flushDiag(true)
     _running = false
     setStatus({ active: false, done: 0, total: 0, message: '' })
   }
@@ -204,6 +236,7 @@ async function saveResults(results) {
     const p = byId.get(id)
     if (p) updated.push(Object.assign(p, { kind, kindV: KIND_VERSION }))
   }
+  _diag.fotos += updated.length
   if (updated.length) await savePhotos(updated)
 }
 
@@ -280,19 +313,31 @@ async function prepareBatch(photos) {
   const known = await getEmbeddings(photos.map(p => p.id)).catch(() => new Map())
   const fromVec = photos.filter(p => known.has(p.id)).map(photo => ({ photo, vec: known.get(photo.id) }))
   photos = photos.filter(p => !known.has(p.id))
+  _diag.deVector += fromVec.length
   if (!photos.length) return fromVec
+  _diag.lotes++
 
+  let t = Date.now()
   await waitIfThrottled()
+  _diag.esperaBloqueoMs += Date.now() - t
+  t = Date.now()
   await pace(photos.length)
+  _diag.esperaRitmoMs += Date.now() - t
 
   const od = photos.filter(p => p.sourceType === 'onedrive')
   let urls = new Map()
   const blockedBefore = throttledUntil()
   if (od.length) {
+    t = Date.now()
     urls = await getThumbnailUrls(od, 'medium').catch(e => {
       logError('No se pudieron pedir miniaturas a OneDrive', e.message)
       return new Map()
     })
+    _diag.graphLlamadas += Math.ceil(od.length / 20)
+    _diag.graphMs += Date.now() - t
+    _diag.graphPedidas += od.length
+    _diag.sinUrl += od.filter(p => !urls.has(p.itemId)).length
+    if (throttledUntil() > blockedBefore) _diag.bloqueosGraph++
   }
 
   // Un 429 del servidor de miniaturas llega sin cabeceras CORS (el navegador solo ve un error de red),
@@ -306,13 +351,15 @@ async function prepareBatch(photos) {
       } else if (urls.has(photo.itemId)) {
         tried++
         let res = null
+        const t0 = Date.now()
         for (let attempt = 0; attempt < 2 && !res; attempt++) {
           try { res = await limitedFetch(urls.get(photo.itemId)) } catch { if (!attempt) await sleep(1500) }
         }
-        if (!res) { netFail++; _attempted.delete(photo.id); return null }
-        if (res.status === 429 || res.status === 503) { limited++; _attempted.delete(photo.id); return null }
-        if (!res.ok) return null   // 406/500: OneDrive no puede generar esa miniatura
+        if (!res) { netFail++; _diag.descRed++; _attempted.delete(photo.id); return null }
+        if (res.status === 429 || res.status === 503) { limited++; _diag.desc429++; _attempted.delete(photo.id); return null }
+        if (!res.ok) { _diag.descNoDisp++; return null }   // 406/500: OneDrive no puede generar esa miniatura
         blob = await res.blob()
+        _diag.descOk++; _diag.descMs += Date.now() - t0
       }
       return blob ? { photo, blob } : null
     } catch { return null }
@@ -331,6 +378,7 @@ async function prepareBatch(photos) {
 async function classifyBatch({ T, processor, visionModel, pool, textVecs }, ready) {
   if (!ready.length) return []
   const toEmbed = ready.filter(r => r.blob)
+  const tIa = Date.now()
   if (toEmbed.length) {
     let vecs
     if (pool) {
@@ -347,6 +395,7 @@ async function classifyBatch({ T, processor, visionModel, pool, textVecs }, read
     toEmbed.forEach((r, i) => { if (vecs[i]) r.vec = Float32Array.from(normalize(vecs[i])) })
     await saveEmbeddings(toEmbed.filter(r => r.vec).map(r => [r.photo.id, r.vec])).catch(() => {})
   }
+  _diag.iaMs += Date.now() - tIa
   return ready.filter(r => r.vec).map(r => [r.photo.id, decideKind(r.vec, r.photo, textVecs)])
 }
 
