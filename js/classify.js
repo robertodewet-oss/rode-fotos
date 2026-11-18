@@ -69,9 +69,11 @@ const CLOUD_EVERY_MS = 5 * 60000  // el índice pesa varios MB: subirlo de vez e
 // Se recuerda el ritmo en que OneDrive empezó a bloquear: después se trabaja un poco por debajo de él,
 // porque cada bloqueo cuesta 1–2 minutos de espera.
 const RATE_MIN = 3, RATE_MAX = 40
-let _ceiling = Number(localStorage.getItem('rode-fotos-ritmo')) || RATE_MAX
+const CEILING_MIN = 6        // nunca recordar un techo menor: OneDrive aguanta al menos esto en promedio
+const RATE_KEY = 'rode-fotos-ritmo2'
+let _ceiling = Math.max(CEILING_MIN, Number(localStorage.getItem(RATE_KEY)) || RATE_MAX)
 let _rate = Math.min(12, _ceiling)
-let _okStreak = 0, _probeStreak = 0
+let _okStreak = 0, _probeStreak = 0, _lastThrottle = 0
 let _nextStartAt = 0
 
 let _running = false
@@ -164,15 +166,18 @@ async function pace(n) {
 }
 
 function onThrottled() {
-  _ceiling = Math.max(RATE_MIN, _rate * 0.8)
-  try { localStorage.setItem('rode-fotos-ritmo', _ceiling.toFixed(1)) } catch {}
+  // Los lotes que se descargan en paralelo ven el mismo bloqueo: contarlo una sola vez
+  if (Date.now() - _lastThrottle < 30000) return
+  _lastThrottle = Date.now()
+  _ceiling = Math.max(CEILING_MIN, _rate * 0.8)
+  try { localStorage.setItem(RATE_KEY, _ceiling.toFixed(1)) } catch {}
   _rate = Math.max(RATE_MIN, _rate / 2)
   _okStreak = 0; _probeStreak = 0
 }
 
 function onBatchOk(n) {
   _okStreak += n; _probeStreak += n
-  if (_okStreak >= 200) { _rate = Math.min(_ceiling, _rate + 2); _okStreak = 0 }
+  if (_okStreak >= 100) { _rate = Math.min(_ceiling, _rate + 2); _okStreak = 0 }
   // Sin bloqueos por un buen rato: probar con un poco más
   if (_probeStreak >= 3000) { _ceiling = Math.min(RATE_MAX, _ceiling + 1); _probeStreak = 0 }
 }
