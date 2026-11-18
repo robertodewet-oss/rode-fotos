@@ -265,8 +265,8 @@ input, select, textarea { font: inherit; }
   overflow-x: hidden;
   position: relative;
 }
-#gallery-wrap.empty-state {
-  display: flex; align-items: center; justify-content: center;
+#gallery-wrap.empty-state > .empty-box {
+  position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%); width: min(420px, 90%);
 }
 
 #gallery-inner { position: relative; width: 100%; }

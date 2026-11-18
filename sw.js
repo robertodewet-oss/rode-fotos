@@ -1,4 +1,4 @@
-const CACHE = 'rode-fotos-v24'
+const CACHE = 'rode-fotos-v25'
 const PRECACHE = [
   './',
   './index.html',

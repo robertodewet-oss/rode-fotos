@@ -487,38 +487,47 @@ function renderActiveView(view) {
 }
 
 function updateActiveView() {
-  if (_currentView === 'gallery') updateGallery()
+  if (_currentView === 'gallery') { updateGallery(); checkEmpty() }
   else if (_currentView === 'map') updateMapPhotos()
 }
 
+// El aviso va en una capa aparte: reemplazar el contenido de #gallery-wrap borraba la galería
+// y al volver a activar un filtro ya no había dónde dibujar las fotos
 function checkEmpty() {
   const { filtered, sources } = getState()
   const wrap = document.getElementById('gallery-wrap')
   if (!wrap) return
-  if (!filtered.length) {
-    wrap.classList.add('empty-state')
-    if (!sources.length) {
-      wrap.innerHTML = `<div class="empty-box">
-        <div class="empty-icon">📸</div>
-        <h2>Sin fotos todavía</h2>
-        <p>Conecta tu OneDrive o agrega una carpeta local para ver tus fotos de obra.</p>
-        <div style="display:flex;gap:8px;justify-content:center">
-          <button class="btn btn--primary" id="btn-add-od">☁️ Conectar OneDrive</button>
-          ${canPickDir() ? `<button class="btn btn--secondary" id="btn-add-local">💾 Carpeta local</button>` : ''}
-        </div>
-      </div>`
-      wrap.querySelector('#btn-add-od')?.addEventListener('click', connectOneDrive)
-      wrap.querySelector('#btn-add-local')?.addEventListener('click', addLocalFolder)
-    } else {
-      wrap.innerHTML = `<div class="empty-box">
-        <div class="empty-icon">🔍</div>
-        <h2>Sin resultados</h2>
-        <p>Ninguna foto coincide con los filtros actuales.</p>
-      </div>`
-    }
-  } else {
+  let box = wrap.querySelector(':scope > .empty-box')
+  if (filtered.length) {
     wrap.classList.remove('empty-state')
+    box?.remove()
+    return
   }
+  const kind = sources.length ? 'filters' : 'nosources'
+  if (box?.dataset.kind === kind) return
+  box?.remove()
+  wrap.classList.add('empty-state')
+  box = document.createElement('div')
+  box.className = 'empty-box'
+  box.dataset.kind = kind
+  if (kind === 'nosources') {
+    box.innerHTML = `
+      <div class="empty-icon">📸</div>
+      <h2>Sin fotos todavía</h2>
+      <p>Conecta tu OneDrive o agrega una carpeta local para ver tus fotos de obra.</p>
+      <div style="display:flex;gap:8px;justify-content:center">
+        <button class="btn btn--primary" id="btn-add-od">☁️ Conectar OneDrive</button>
+        ${canPickDir() ? `<button class="btn btn--secondary" id="btn-add-local">💾 Carpeta local</button>` : ''}
+      </div>`
+    box.querySelector('#btn-add-od')?.addEventListener('click', connectOneDrive)
+    box.querySelector('#btn-add-local')?.addEventListener('click', addLocalFolder)
+  } else {
+    box.innerHTML = `
+      <div class="empty-icon">🔍</div>
+      <h2>Sin resultados</h2>
+      <p>Ninguna foto coincide con los filtros actuales.</p>`
+  }
+  wrap.appendChild(box)
 }
 
 function canPickDir() { return 'showDirectoryPicker' in window }
