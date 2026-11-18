@@ -59,8 +59,8 @@ export function canClassifyHere() {
   return window.matchMedia('(pointer: fine)').matches && window.innerWidth >= 768
 }
 
-const PREFETCH = 3           // lotes descargándose mientras se analiza el actual
-const MAX_DOWNLOADS = 8      // miniaturas descargándose a la vez
+const PREFETCH = 4           // lotes descargándose mientras se analiza el actual
+const MAX_DOWNLOADS = 12     // miniaturas descargándose a la vez
 const UI_EVERY_MS = 1000     // con miles de fotos, refrescar la vista por cada foto es lo que más tarda
 const FILTER_EVERY_MS = 15000
 const CLOUD_EVERY_MS = 5 * 60000  // el índice pesa varios MB: subirlo de vez en cuando, no por lote
@@ -79,15 +79,22 @@ let _nextStartAt = 0
 // ── Diagnóstico minuto a minuto (se ve en Fuentes) ─────────────────────────
 const DIAG_KEY = 'rode-fotos-diagnostico'
 function newMinute() {
-  return { at: Date.now(), fotos: 0, deVector: 0, lotes: 0, esperaBloqueoMs: 0, esperaRitmoMs: 0,
+  return { at: Date.now(), ocultaMs: 0, fotos: 0, deVector: 0, lotes: 0, esperaBloqueoMs: 0, esperaRitmoMs: 0,
     graphLlamadas: 0, graphMs: 0, graphPedidas: 0, sinUrl: 0, bloqueosGraph: 0,
     descOk: 0, descMs: 0, desc429: 0, descRed: 0, descNoDisp: 0, iaMs: 0, ritmo: 0, techo: 0 }
 }
 let _diag = newMinute()
+// Tiempo con la pestaña oculta o minimizada (Chrome le da menos recursos)
+let _hiddenSince = document.hidden ? Date.now() : 0
+document.addEventListener('visibilitychange', () => {
+  if (document.hidden) _hiddenSince = Date.now()
+  else if (_hiddenSince) { _diag.ocultaMs += Date.now() - _hiddenSince; _hiddenSince = 0 }
+})
 function flushDiag(force = false) {
   if (!force && Date.now() - _diag.at < 60000) return
   _diag.ritmo = +_rate.toFixed(1); _diag.techo = +_ceiling.toFixed(1)
   _diag.duracionMs = Date.now() - _diag.at
+  if (_hiddenSince) { _diag.ocultaMs += Date.now() - _hiddenSince; _hiddenSince = Date.now() }
   if (_diag.lotes || _diag.fotos) {
     try {
       const log = JSON.parse(localStorage.getItem(DIAG_KEY) || '[]')
@@ -211,7 +218,7 @@ function onBatchOk(n) {
   _okStreak += n; _probeStreak += n
   if (_okStreak >= 100) { _rate = Math.min(_ceiling, _rate + 2); _okStreak = 0 }
   // Sin bloqueos por un buen rato: probar con un poco más
-  if (_probeStreak >= 3000) { _ceiling = Math.min(RATE_MAX, _ceiling + 1); _probeStreak = 0 }
+  if (_probeStreak >= 600) { _ceiling = Math.min(RATE_MAX, _ceiling + 1); _probeStreak = 0 }
 }
 
 let _activeDownloads = 0
@@ -225,7 +232,21 @@ async function limitedFetch(url) {
   }
 }
 
-function sleep(ms) { return new Promise(r => setTimeout(r, ms)) }
+// Chrome frena los temporizadores de una pestaña oculta (hasta 1 por minuto); los de un hilo aparte no.
+// Por eso las pausas de la clasificación se cuentan en un worker mínimo.
+let _timer = null, _timerSeq = 0
+const _timerWait = new Map()
+function sleep(ms) {
+  if (!_timer) {
+    try {
+      const src = 'onmessage = e => setTimeout(() => postMessage(e.data.id), e.data.ms)'
+      _timer = new Worker(URL.createObjectURL(new Blob([src], { type: 'text/javascript' })))
+      _timer.onmessage = e => { _timerWait.get(e.data)?.(); _timerWait.delete(e.data) }
+    } catch { _timer = false }
+  }
+  if (!_timer) return new Promise(r => setTimeout(r, ms))
+  return new Promise(r => { const id = ++_timerSeq; _timerWait.set(id, r); _timer.postMessage({ id, ms }) })
+}
 
 // Aplica sobre la versión actual de cada foto: el estado puede haberse recargado desde la nube mientras tanto
 async function saveResults(results) {

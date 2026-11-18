@@ -85,6 +85,7 @@ const DIAG_COLS = [
   ['Error red', d => d.descRed, 'Miniaturas que fallaron sin respuesta (a veces es un bloqueo)'],
   ['No disp.', d => d.descNoDisp, 'Miniaturas que OneDrive no pudo generar'],
   ['IA', d => secs(d.iaMs), 'Tiempo total de la IA en ese minuto'],
+  ['Oculta', d => d.ocultaMs == null ? '—' : secs(d.ocultaMs), 'Tiempo con la pestaña oculta o minimizada'],
 ]
 function secs(ms) { return (ms / 1000).toFixed(1) + ' s' }
 

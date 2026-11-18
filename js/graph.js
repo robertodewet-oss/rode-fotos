@@ -120,11 +120,19 @@ export async function getDownloadUrl(driveId, itemId) {
   return data?.['@microsoft.graph.downloadUrl'] || null
 }
 
-// URLs de miniatura de muchos items en peticiones $batch de 20 (el máximo de Graph). Devuelve Map itemId → url
+// URLs de miniatura de muchos items en peticiones $batch de 20 (el máximo de Graph), en paralelo. Devuelve Map itemId → url
 export async function getThumbnailUrls(items, size = 'medium') {
   const urls = new Map()
-  for (let i = 0; i < items.length; i += 20) {
-    let chunk = items.slice(i, i + 20)
+  const chunks = []
+  for (let i = 0; i < items.length; i += 20) chunks.push(items.slice(i, i + 20))
+  // Si falla una petición, las demás siguen; solo es error si fallan todas
+  let failures = 0, lastError = null
+  await Promise.all(chunks.map(first => getThumbChunk(first).catch(e => { failures++; lastError = e })))
+  if (failures && failures === chunks.length) throw lastError
+  return urls
+
+  async function getThumbChunk(first) {
+    let chunk = first
     // Dentro del lote, Graph puede limitar solo algunas: reintentar esas tras la espera
     for (let attempt = 0; attempt < 4 && chunk.length; attempt++) {
       const data = await g('/$batch', {
@@ -148,7 +156,6 @@ export async function getThumbnailUrls(items, size = 'medium') {
       if (chunk.length) noteThrottle(waitSec, 'clasificar')
     }
   }
-  return urls
 }
 
 // Descarga el contenido de un archivo del approot
