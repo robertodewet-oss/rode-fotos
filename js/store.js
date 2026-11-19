@@ -51,12 +51,27 @@ export function dateFromName(name = '') {
 
 // Fecha más confiable de un archivo: captura (EXIF) → nombre → la más antigua entre creación y modificación.
 // La "creación" de OneDrive suele ser la fecha en que se subió; la modificación conserva la del teléfono.
+// OneDrive pone como "captura" la fecha de subida a imágenes sin datos de cámara (capturas, WhatsApp…):
+// si el nombre trae una fecha anterior por más de un día y medio, manda el nombre.
+const NAME_WINS_MS = 36 * 3600 * 1000
+
 export function bestDate(takenAt, name, ...fileDates) {
-  if (takenAt) return takenAt
   const fromName = dateFromName(name)
+  if (takenAt && fromName && takenAt - fromName > NAME_WINS_MS) return fromName
+  if (takenAt) return takenAt
   if (fromName) return fromName
   const valid = fileDates.filter(Boolean)
   return valid.length ? Math.min(...valid) : null
+}
+
+// Corrige fotos ya indexadas con la regla anterior; devuelve true si cambió
+export function fixTakenAt(photo) {
+  const fromName = dateFromName(photo.name)
+  if (photo.takenAt && fromName && photo.takenAt - fromName > NAME_WINS_MS) {
+    photo.takenAt = fromName
+    return true
+  }
+  return false
 }
 
 // '' agrupa los archivos sin datos de cámara

@@ -1,4 +1,5 @@
 import { DB_NAME, DB_VERSION } from '../config.js'
+import { fixTakenAt } from './store.js'
 
 let _db = null
 
@@ -130,7 +131,12 @@ export async function getAllByIndex(storeName, indexName, value) {
 
 // ── Fotos ──────────────────────────────────────────────────────────────────
 
-export async function getPhotos() { return getAll('photos') }
+export async function getPhotos() {
+  const photos = await getAll('photos')
+  const fixed = photos.filter(fixTakenAt)
+  if (fixed.length) putAll('photos', fixed).catch(() => {})
+  return photos
+}
 
 export async function savePhotos(photos) { return putAll('photos', photos) }
 
