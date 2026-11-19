@@ -74,7 +74,7 @@ export async function listFolderChildren(driveId, folderId) {
 // Delta query para obtener todos los archivos de imagen en una carpeta
 // Retorna { items, deltaLink }
 export async function getDelta(driveId, folderId, deltaLink = null, onPage = null) {
-  const items = []
+  const items = [], deleted = []
   let url = deltaLink || `${BASE}/drives/${driveId}/items/${folderId}/delta?$select=id,name,file,photo,video,location,fileSystemInfo,deleted,size&$top=200`
 
   while (url) {
@@ -86,7 +86,7 @@ export async function getDelta(driveId, folderId, deltaLink = null, onPage = nul
     const data = await res.json()
     if (data.value) {
       for (const item of data.value) {
-        if (item.deleted) continue
+        if (item.deleted) { deleted.push(item.id); continue }
         if (!item.photo && !item.video && !isImageFile(item.name) && !isVideoFile(item.name)) continue
         if (!item.file) continue // es carpeta
         items.push(item)
@@ -94,10 +94,10 @@ export async function getDelta(driveId, folderId, deltaLink = null, onPage = nul
     }
     onPage?.(items.length)
     if (data['@odata.nextLink']) url = data['@odata.nextLink']
-    else if (data['@odata.deltaLink']) return { items, deltaLink: data['@odata.deltaLink'] }
+    else if (data['@odata.deltaLink']) return { items, deleted, deltaLink: data['@odata.deltaLink'] }
     else break
   }
-  return { items, deltaLink: null }
+  return { items, deleted, deltaLink: null }
 }
 
 function isImageFile(name = '') {

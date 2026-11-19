@@ -7,7 +7,7 @@ import { syncFromCloud, reloadState } from './sync.js'
 import { initGallery, updateGallery, rebuildGalleryCards } from './gallery.js'
 import { initViewer } from './viewer.js'
 import { initMapView, updateMapPhotos, resizeMap } from './mapView.js'
-import { renderSourcesView, connectOneDrive, addLocalFolder, syncAllSources } from './sources.js'
+import { renderSourcesView, connectOneDrive, addLocalFolder, syncAllSources, startAutoSync } from './sources.js'
 import { renderProjectsView } from './projects.js'
 import { showExportDialog } from './export.js'
 import { notify, escHtml, logError } from './ui.js'
@@ -377,6 +377,8 @@ function renderApp() {
 
   // Dar tiempo a que cargue la galería antes de empezar a descargar el modelo
   setTimeout(startClassification, 3000)
+  // Archivos nuevos en OneDrive aparecen solos; la IA los clasifica en cuanto llegan
+  startAutoSync(() => { updateActiveView(); startClassification() })
 }
 
 const KIND_FILTERS = [

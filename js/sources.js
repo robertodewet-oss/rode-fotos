@@ -1,9 +1,9 @@
 import { getAccount, signIn } from './auth.js'
 import { getMyDrive, listRootChildren, listFolderChildren, getDelta, isVideoFile, getItemWebUrl } from './graph.js'
-import { getSources, saveSource, deleteSource, savePhotos, deletePhotosBySource, savePhoto, saveThumbnail, getConfig, setConfig, getPhotos, getProjects, getTags } from './db.js'
+import { getSources, saveSource, deleteSource, savePhotos, deletePhotosBySource, savePhoto, deletePhoto, saveThumbnail, getConfig, setConfig, getPhotos, getProjects, getTags } from './db.js'
 import { getState, setState, autoAssignProject, applyFilters, bestDate, uploadSafeTaken } from './store.js'
 import { scheduleSave } from './sync.js'
-import { notify, escHtml, getErrorLog, clearErrorLog } from './ui.js'
+import { notify, escHtml, getErrorLog, clearErrorLog, logError } from './ui.js'
 import { getDiagnostics, clearDiagnostics } from './classify.js'
 
 // ── Colores disponibles para proyectos/fuentes ─────────────────────────────
@@ -291,24 +291,33 @@ function showFolderPicker(driveId) {
 
 // ── Indexar fuente OneDrive ───────────────────────────────────────────────
 
-export async function indexOneDriveSource(source, incremental = false) {
+// quiet: revisión automática en segundo plano; sin barra de progreso ni avisos salvo que haya cambios.
+// Devuelve cuántos archivos nuevos/cambiados/borrados encontró (-1 si no se pudo revisar en silencio).
+export async function indexOneDriveSource(source, incremental = false, quiet = false) {
   const { projects } = getState()
-  updateSourceStatus(source.id, 'indexing')
-  setIndexingState(true, source.id, 0, 0, 'Iniciando...')
+  // Cambiar el prefijo fuerza un escaneo completo (p. ej. "delta5_": guardar la fecha de modificación)
+  const deltaLink = incremental ? (await getConfig(`delta5_${source.id}`)) : null
+  // Un escaneo completo es largo: nunca en silencio, se hace al presionar Actualizar
+  if (quiet && !deltaLink) return -1
+  const progress = (...a) => { if (!quiet) setIndexingState(...a) }
+  if (!quiet) updateSourceStatus(source.id, 'indexing')
+  progress(true, source.id, 0, 0, 'Iniciando...')
 
   try {
-    // Cambiar el prefijo fuerza un escaneo completo (p. ej. "delta5_": guardar la fecha de modificación)
-    const deltaLink = incremental ? (await getConfig(`delta5_${source.id}`)) : null
-    const { items, deltaLink: newDelta } = await getDelta(source.driveId, source.folderId, deltaLink,
-      n => setIndexingState(true, source.id, 0, 0, `Revisando OneDrive… ${n.toLocaleString('es-MX')} archivos`))
+    const { items, deleted = [], deltaLink: newDelta } = await getDelta(source.driveId, source.folderId, deltaLink,
+      n => progress(true, source.id, 0, 0, `Revisando OneDrive… ${n.toLocaleString('es-MX')} archivos`))
 
-    setIndexingState(true, source.id, 0, items.length, `Indexando ${items.length} archivos...`)
+    if (quiet && !items.length && !deleted.length) {
+      if (newDelta) await setConfig(`delta5_${source.id}`, newDelta)
+      return 0
+    }
+    progress(true, source.id, 0, items.length, `Indexando ${items.length} archivos...`)
 
     const existing = new Map(getState().photos.map(p => [p.id, p]))
     const photos = []
     for (let i = 0; i < items.length; i++) {
       const item = items[i]
-      setIndexingState(true, source.id, i + 1, items.length, `${item.name}`)
+      progress(true, source.id, i + 1, items.length, `${item.name}`)
 
       const photo = keepUserData(buildOneDrivePhoto(item, source.id, source.driveId, projects), existing)
       photos.push(photo)
@@ -320,19 +329,38 @@ export async function indexOneDriveSource(source, incremental = false) {
       }
     }
 
+    // Archivos borrados o movidos fuera de la carpeta en OneDrive
+    const known = new Set(getState().photos.map(p => p.id))
+    const gone = deleted.map(id => `od_${source.id}_${id}`).filter(id => known.has(id))
+    for (const id of gone) await deletePhoto(id)
+
     if (newDelta) await setConfig(`delta5_${source.id}`, newDelta)
 
-    // Actualizar fuente
-    const updSource = { ...source, status: 'ok', photoCount: items.length, lastSync: Date.now() }
-    await saveSource(updSource)
+    // Actualizar fuente (en una revisión incremental items son solo los cambios: contar en el índice)
+    await refreshState()
+    const photoCount = getState().photos.filter(p => p.sourceId === source.id).length
+    await saveSource({ ...source, status: 'ok', photoCount, lastSync: Date.now() })
     await refreshState()
     scheduleSave()
-    notify(`${items.length} fotos indexadas de "${source.name}"`, 'success')
+    if (quiet) {
+      const parts = []
+      if (items.length) parts.push(`${items.length} ${items.length === 1 ? 'archivo nuevo o cambiado' : 'archivos nuevos o cambiados'}`)
+      if (gone.length) parts.push(`${gone.length} ${gone.length === 1 ? 'borrado' : 'borrados'}`)
+      if (parts.length) notify(`OneDrive: ${parts.join(', ')}`, 'success')
+    } else {
+      notify(incremental ? `"${source.name}" al día: ${items.length} cambios` : `${items.length} fotos indexadas de "${source.name}"`, 'success')
+    }
+    return items.length + gone.length
   } catch (e) {
-    updateSourceStatus(source.id, 'error')
-    notify('Error al indexar: ' + e.message, 'error')
+    if (!quiet) {
+      updateSourceStatus(source.id, 'error')
+      notify('Error al indexar: ' + e.message, 'error')
+    } else {
+      logError('No se pudo revisar OneDrive en segundo plano', e.message)
+    }
+    return -1
   } finally {
-    setIndexingState(false)
+    if (!quiet) setIndexingState(false)
   }
 }
 
@@ -599,7 +627,34 @@ export async function syncSource(sourceId) {
 
 export async function syncAllSources() {
   if (getState().indexing.active) return
+  await _autoRun   // no revisar dos veces a la vez
   for (const src of getState().sources) await syncSource(src.id)
+}
+
+// ── Revisión automática de OneDrive ───────────────────────────────────────
+// Graph no puede avisar a una página web de cambios; se pregunta con delta (una sola petición
+// barata cuando no hay nada nuevo) al abrir la app, cada pocos minutos y al volver a la pestaña.
+const AUTO_EVERY_MS = 2 * 60000
+const AUTO_MIN_GAP_MS = 45000
+let _autoStarted = false, _autoRun = Promise.resolve(), _lastAuto = 0
+
+export function startAutoSync(onChanges) {
+  if (_autoStarted) return
+  _autoStarted = true
+  const tick = () => {
+    if (!getAccount() || getState().indexing.active || Date.now() - _lastAuto < AUTO_MIN_GAP_MS) return
+    _lastAuto = Date.now()
+    _autoRun = (async () => {
+      let changes = 0
+      for (const src of getState().sources.filter(s => s.type === 'onedrive')) {
+        changes += Math.max(0, await indexOneDriveSource(src, true, true))
+      }
+      if (changes) onChanges?.()
+    })().catch(() => {})
+  }
+  setTimeout(tick, 5000)
+  setInterval(() => { if (!document.hidden) tick() }, AUTO_EVERY_MS)
+  document.addEventListener('visibilitychange', () => { if (!document.hidden) tick() })
 }
 
 // ── Eliminar fuente ───────────────────────────────────────────────────────
