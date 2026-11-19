@@ -55,6 +55,13 @@ export function dateFromName(name = '') {
 // si el nombre trae una fecha anterior por más de un día y medio, manda el nombre.
 const NAME_WINS_MS = 36 * 3600 * 1000
 
+// Imágenes sin datos de cámara: OneDrive pone como captura el día de subida, pero la fecha de
+// modificación suele conservar la del teléfono. Si es anterior por más de un día y medio, manda esa.
+export function uploadSafeTaken(takenAt, modifiedAt, noCamera) {
+  if (takenAt && modifiedAt && noCamera && takenAt - modifiedAt > NAME_WINS_MS) return modifiedAt
+  return takenAt
+}
+
 export function bestDate(takenAt, name, ...fileDates) {
   const fromName = dateFromName(name)
   if (takenAt && fromName && takenAt - fromName > NAME_WINS_MS) return fromName
@@ -66,6 +73,9 @@ export function bestDate(takenAt, name, ...fileDates) {
 
 // Corrige fotos ya indexadas con la regla anterior; devuelve true si cambió
 export function fixTakenAt(photo) {
+  const noCamera = !photo.cameraMake && !photo.cameraModel
+  const fromModified = uploadSafeTaken(photo.takenAt, photo.modifiedAt, noCamera)
+  if (fromModified !== photo.takenAt) { photo.takenAt = fromModified; fixTakenAt(photo); return true }
   const fromName = dateFromName(photo.name)
   if (photo.takenAt && fromName && photo.takenAt - fromName > NAME_WINS_MS) {
     photo.takenAt = fromName

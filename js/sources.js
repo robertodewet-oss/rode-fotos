@@ -1,7 +1,7 @@
 import { getAccount, signIn } from './auth.js'
 import { getMyDrive, listRootChildren, listFolderChildren, getDelta, isVideoFile, getItemWebUrl } from './graph.js'
 import { getSources, saveSource, deleteSource, savePhotos, deletePhotosBySource, savePhoto, saveThumbnail, getConfig, setConfig, getPhotos, getProjects, getTags } from './db.js'
-import { getState, setState, autoAssignProject, applyFilters, bestDate } from './store.js'
+import { getState, setState, autoAssignProject, applyFilters, bestDate, uploadSafeTaken } from './store.js'
 import { scheduleSave } from './sync.js'
 import { notify, escHtml, getErrorLog, clearErrorLog } from './ui.js'
 import { getDiagnostics, clearDiagnostics } from './classify.js'
@@ -297,8 +297,8 @@ export async function indexOneDriveSource(source, incremental = false) {
   setIndexingState(true, source.id, 0, 0, 'Iniciando...')
 
   try {
-    // Cambiar el prefijo fuerza un escaneo completo (p. ej. "delta4_": recalcular fechas y guardar la de creación)
-    const deltaLink = incremental ? (await getConfig(`delta4_${source.id}`)) : null
+    // Cambiar el prefijo fuerza un escaneo completo (p. ej. "delta5_": guardar la fecha de modificación)
+    const deltaLink = incremental ? (await getConfig(`delta5_${source.id}`)) : null
     const { items, deltaLink: newDelta } = await getDelta(source.driveId, source.folderId, deltaLink,
       n => setIndexingState(true, source.id, 0, 0, `Revisando OneDrive… ${n.toLocaleString('es-MX')} archivos`))
 
@@ -320,7 +320,7 @@ export async function indexOneDriveSource(source, incremental = false) {
       }
     }
 
-    if (newDelta) await setConfig(`delta4_${source.id}`, newDelta)
+    if (newDelta) await setConfig(`delta5_${source.id}`, newDelta)
 
     // Actualizar fuente
     const updSource = { ...source, status: 'ok', photoCount: items.length, lastSync: Date.now() }
@@ -339,7 +339,7 @@ export async function indexOneDriveSource(source, incremental = false) {
 function keepUserData(photo, existing) {
   const old = existing.get(photo.id)
   if (!old) return photo
-  return { ...photo, tags: old.tags || [], kind: old.kind, kindV: old.kindV }
+  return { ...photo, tags: old.tags || [], kind: old.kind, kindV: old.kindV, projectId: photo.projectId ?? old.projectId ?? null }
 }
 
 function buildOneDrivePhoto(item, sourceId, driveId, projects) {
@@ -349,7 +349,9 @@ function buildOneDrivePhoto(item, sourceId, driveId, projects) {
   const lat = loc.latitude || null
   const lng = loc.longitude || null
   const ms = s => (s ? new Date(s).getTime() : null)
-  const takenAt = bestDate(ms(photo.takenDateTime), item.name, ms(fsi.createdDateTime), ms(fsi.lastModifiedDateTime))
+  const noCamera = !photo.cameraMake && !photo.cameraModel
+  const takenAt = bestDate(uploadSafeTaken(ms(photo.takenDateTime), ms(fsi.lastModifiedDateTime), noCamera),
+    item.name, ms(fsi.createdDateTime), ms(fsi.lastModifiedDateTime))
   const isVideo = !!item.video || item.file?.mimeType?.startsWith('video/') || isVideoFile(item.name)
 
   const p = {
@@ -370,6 +372,7 @@ function buildOneDrivePhoto(item, sourceId, driveId, projects) {
     tags: [],
     size: item.size || 0,
     createdAt: ms(fsi.createdDateTime),
+    modifiedAt: ms(fsi.lastModifiedDateTime),
     indexedAt: Date.now(),
   }
   p.projectId = autoAssignProject(p, projects)
